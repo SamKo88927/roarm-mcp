@@ -3,6 +3,7 @@
 [![PyPI](https://img.shields.io/pypi/v/roarm-mcp)](https://pypi.org/project/roarm-mcp/)
 [![CI](https://github.com/SamKo88927/roarm-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/SamKo88927/roarm-mcp/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+[![SamKo88927/roarm-mcp MCP server](https://glama.ai/mcp/servers/SamKo88927/roarm-mcp/badges/score.svg)](https://glama.ai/mcp/servers/SamKo88927/roarm-mcp)
 
 <!-- mcp-name: io.github.SamKo88927/roarm-mcp -->
 
