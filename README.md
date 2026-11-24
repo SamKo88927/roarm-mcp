@@ -1,5 +1,11 @@
 # roarm-mcp
 
+[![PyPI](https://img.shields.io/pypi/v/roarm-mcp)](https://pypi.org/project/roarm-mcp/)
+[![CI](https://github.com/SamKo88927/roarm-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/SamKo88927/roarm-mcp/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+
+<!-- mcp-name: io.github.SamKo88927/roarm-mcp -->
+
 An [MCP](https://modelcontextprotocol.io) server that lets LLM agents drive a
 [Waveshare RoArm-M3](https://www.waveshare.com/wiki/RoArm-M3) desk arm, with a safety layer the agent cannot bypass.
 
@@ -28,13 +34,13 @@ and without them the simulator draws a box-and-cylinder shell.</sub>
 Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/). No clone needed:
 
 ```sh
-uvx --from git+https://github.com/SamKo88927/roarm-mcp roarm-mcp --help
+uvx roarm-mcp --help
 ```
 
 ### Claude Code
 
 ```sh
-claude mcp add roarm -- uvx --from git+https://github.com/SamKo88927/roarm-mcp roarm-mcp
+claude mcp add roarm -- uvx roarm-mcp
 ```
 
 ### Claude Desktop and other MCP clients
@@ -44,7 +50,7 @@ claude mcp add roarm -- uvx --from git+https://github.com/SamKo88927/roarm-mcp r
   "mcpServers": {
     "roarm": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/SamKo88927/roarm-mcp", "roarm-mcp"]
+      "args": ["roarm-mcp"]
     }
   }
 }
