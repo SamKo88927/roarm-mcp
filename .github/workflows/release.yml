@@ -22,7 +22,7 @@ jobs:
       - name: Tag matches package version
         run: test "${GITHUB_REF_NAME#v}" = "$(uv run python -c 'import roarm_mcp; print(roarm_mcp.__version__)')"
       - run: uv build
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/
