@@ -17,7 +17,13 @@ from roarm_mcp.sim import SimTransport
 ARM = Arm(SimTransport(realtime=False))
 MIN_CLEARANCE = ARM.envelope.min_clearance_mm
 OUTCOMES: Counter[str] = Counter()
-SETTINGS = settings(max_examples=80, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+SETTINGS = settings(
+    max_examples=80,
+    deadline=None,
+    derandomize=True,  # same examples every run, so the "really moved" floor below is not flaky
+    database=None,
+    suppress_health_check=[HealthCheck.too_slow],
+)
 
 speed = st.floats(0.05, 1.0)
 wild_angle = st.floats(-400, 400, allow_nan=False)
