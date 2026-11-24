@@ -1,6 +1,6 @@
 [project]
 name = "roarm-mcp"
-version = "0.1.0"
+version = "0.1.1"
 description = "MCP server that lets LLM agents drive a Waveshare RoArm-M3, with every motion checked in MuJoCo first."
 readme = "README.md"
 license = "Apache-2.0"

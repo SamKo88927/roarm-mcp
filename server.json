@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.SamKo88927/roarm-mcp",
+  "title": "RoArm-M3",
+  "description": "Drive a Waveshare RoArm-M3 robot arm; every motion is checked in MuJoCo before it runs.",
+  "repository": {
+    "url": "https://github.com/SamKo88927/roarm-mcp",
+    "source": "github"
+  },
+  "version": "0.1.1",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "roarm-mcp",
+      "version": "0.1.1",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

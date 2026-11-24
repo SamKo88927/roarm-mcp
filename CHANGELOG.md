@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1 (2026-11-24)
+
+- Install from PyPI: `uvx roarm-mcp`. README badges.
+- MCP Registry name `io.github.SamKo88927/roarm-mcp` (`server.json`).
+
 ## 0.1.0 (2026-11-24)
 
 - MCP server with `get_state`, `get_limits`, `move_to`, `move_joints`, `gripper`, `rest`, `stop`, and the
