@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import math
 
+import mujoco as mj
 import numpy as np
 import pytest
 
+from roarm_mcp.model import VISUAL_GROUP, build_mjcf
 from roarm_mcp.sim import HOME, ArmModel, Pose
 
 # Tool centre point (world frame, mm) of the mesh-based reference model at these joint angles (rad).
@@ -53,3 +55,20 @@ def test_ik_converges(target: Pose) -> None:
 def test_ik_reports_failure_instead_of_hiding_it() -> None:
     _, err_mm, _ = ArmModel().solve_ik(Pose(600, 0, 0, 0, 0), HOME)
     assert err_mm > 50
+
+
+def test_safety_checks_use_collision_geoms_only() -> None:
+    # The visual shell must never change what the safety layer checks, or the arm's mass.
+    model = ArmModel()
+    names = {model.model.geom(g).name for g in model.moving_geoms}
+    assert names == {"turret", "upper_arm", "forearm", "wrist", "hand", "jaw"}
+    visual = [g for g in range(model.model.ngeom) if model.model.geom_group[g] == VISUAL_GROUP]
+    assert visual
+    for g in visual:
+        assert model.model.geom_contype[g] == 0
+        assert model.model.geom_conaffinity[g] == 0
+    # Mass comes only from the collision geoms (density 1200), so it matches a model without the shell.
+    stripped = mj.MjModel.from_xml_string(
+        "\n".join(line for line in build_mjcf().splitlines() if 'class="' not in line or "<default" in line)
+    )
+    assert np.allclose(model.model.body_mass, stripped.body_mass)

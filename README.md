@@ -124,8 +124,8 @@ guard test fails the suite if too few of those random commands actually moved th
 ## Limitations
 
 - Simulation only in 0.1. The real-arm transports, camera tools and pick/place skills are not in this release.
-- The simulated arm uses primitive shapes (capsules, boxes) on the arm's kinematic tree. No vendor meshes or CAD
-  files are shipped.
+- The simulated arm is built from boxes and cylinders on the arm's kinematic tree: a visual shell in the arm's
+  colours, and hidden capsules and boxes for collision. No vendor meshes or CAD files are shipped.
 - The minimum clearance is checked against the table plane only. Objects on the table are not modelled yet.
 - The simulation holds joints against gravity like stiff position servos. Real servos sag and lag more; the
   real-arm milestone adds measured margins.
