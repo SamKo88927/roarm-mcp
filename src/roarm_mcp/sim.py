@@ -61,9 +61,13 @@ class ArmModel:
         self.lower: Vec = self.model.jnt_range[:, 0].copy()
         self.upper: Vec = self.model.jnt_range[:, 1].copy()
         base_body = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_BODY, "base_link")
-        # Geoms that move with the arm. The base box sits on the table by design.
+        # Collision geoms that move with the arm. The base box sits on the table by design.
+        # Visual-only geoms (no contype/conaffinity) are not part of any safety check.
         self.moving_geoms: set[int] = {
-            g for g in range(self.model.ngeom) if int(self.model.geom_bodyid[g]) not in (0, base_body)
+            g
+            for g in range(self.model.ngeom)
+            if int(self.model.geom_bodyid[g]) not in (0, base_body)
+            and (int(self.model.geom_contype[g]) or int(self.model.geom_conaffinity[g]))
         }
 
     def _set(self, q: Joints) -> None:
