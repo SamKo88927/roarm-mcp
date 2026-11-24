@@ -3,12 +3,20 @@
 Every frame comes from the real code path: the same Arm, governor and SimTransport the MCP server uses.
 The captions show the tool call and the result it returned.
 
-    uv run --extra render python scripts/record_demo.py docs/media/demo.gif
+    uv run --extra render python scripts/record_demo.py docs/media/demo.gif [--meshes DIR]
+
+With --meshes, the arm is drawn with per-link STL meshes instead of the built-in box-and-cylinder shell.
+The README GIF was rendered this way from meshes split out of Waveshare's official RoArm-M3 STEP file.
+The meshes are not part of this repository. Name them <body>_<part>_<nn>.stl, where body is one of
+base_link, link1, link2, link3, link4, link5, gripper_link and part is structure, servo, hardware, detail or
+electronics; each mesh must be in its body's frame. Only the drawing changes: kinematics, collision shapes and
+every safety check are the same as without --meshes.
 """
 
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import textwrap
 from collections.abc import Callable
@@ -21,6 +29,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from roarm_mcp.arm import Arm
+from roarm_mcp.model import build_mjcf
 from roarm_mcp.sim import SimTransport
 
 WIDTH, HEIGHT = 640, 480
@@ -30,11 +39,57 @@ RED = (0.95, 0.2, 0.2, 0.55)
 Result = dict[str, Any]
 
 
+# STL body prefix -> body name in the MJCF, and STL part -> material.
+MESH_BODIES = {"gripper_link": "jaw"}
+MESH_MATERIALS = {"structure": "white", "servo": "servo", "hardware": "servo", "detail": "tube", "electronics": "pcb"}
+# The base and turret meshes sit 7 mm low against the joint axes in the source model; measured against the STEP.
+MESH_OFFSETS = {"base_link": "0 0 0.007", "link1": "0 0 0.007"}
+# Shell parts kept with meshes: the source meshes have no turret U-bracket, so the shell's bracket stands in.
+KEEP_SHELL = re.compile(r'pos="0 (-?0\.031 0\.028|0 0\.0055|0 0\.002)"')
+
+
+def mesh_mjcf(mesh_dir: Path) -> str:
+    """The arm's MJCF with the visual shell replaced by STL meshes. Collision geoms are untouched."""
+    xml = build_mjcf()
+    lines = [
+        line
+        for line in xml.splitlines()
+        if not ("<geom class=" in line and not KEEP_SHELL.search(line)) or "<default" in line
+    ]
+    xml = "\n".join(lines).replace("<compiler ", f'<compiler meshdir="{mesh_dir.resolve()}" ', 1)
+    assets: list[str] = []
+    per_body: dict[str, list[str]] = {}
+    for stl in sorted(mesh_dir.glob("*.stl")):
+        match = re.fullmatch(r"(.+)_(structure|servo|hardware|detail|electronics)_\d+", stl.stem)
+        if match is None:
+            continue
+        source, part = match.groups()
+        assets.append(f'<mesh name="m_{stl.stem}" file="{stl.name}"/>')
+        offset = MESH_OFFSETS.get(source, "0 0 0")
+        per_body.setdefault(MESH_BODIES.get(source, source), []).append(
+            f'<geom class="visual" type="mesh" mesh="m_{stl.stem}" material="{MESH_MATERIALS[part]}" pos="{offset}"/>'
+        )
+    if not assets:
+        raise SystemExit(f"no <body>_<part>_<nn>.stl meshes in {mesh_dir}")
+    xml = xml.replace("</asset>", "  " + "\n    ".join(assets) + "\n  </asset>", 1)
+    for body, geoms in per_body.items():
+        inserted = "".join(geoms).replace("\\", "\\\\")
+        xml, count = re.subn(rf'(<body name="{body}"[^>]*>)', rf"\g<1>{inserted}", xml, count=1)
+        if count != 1:
+            raise SystemExit(f"meshes for unknown body {body!r}")
+    return xml
+
+
 class RecordingSim(SimTransport):
     """SimTransport that renders a frame every 1/FPS seconds of simulated time."""
 
-    def __init__(self) -> None:
+    def __init__(self, mesh_dir: Path | None = None) -> None:
         super().__init__(realtime=False)
+        if mesh_dir is not None:
+            self.model = mj.MjModel.from_xml_string(mesh_mjcf(mesh_dir))
+            self.data = mj.MjData(self.model)
+            mj.mj_resetDataKeyframe(self.model, self.data, 0)
+            mj.mj_forward(self.model, self.data)
         self.renderer = mj.Renderer(self.model, HEIGHT, WIDTH)
         self.camera = mj.MjvCamera()
         self.camera.lookat[:] = (0.25, 0.0, 0.14)
@@ -124,9 +179,10 @@ def step(sim: RecordingSim, call: str, run: Callable[[], Result], where: tuple[f
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path)
+    parser.add_argument("--meshes", type=Path, help="directory of per-link STL meshes (see the module docstring)")
     args = parser.parse_args(argv)
 
-    sim = RecordingSim()
+    sim = RecordingSim(args.meshes)
     arm = Arm(sim)
     sim.hold(0.5)
 

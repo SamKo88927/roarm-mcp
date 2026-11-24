@@ -9,7 +9,9 @@ An [MCP](https://modelcontextprotocol.io) server that lets LLM agents drive a
 
 <sub>Every frame comes from the same `Arm`, safety layer and simulator the MCP server uses
 (`uv run --extra render python scripts/record_demo.py docs/media/demo.gif`). Refused targets turn red, and the
-out-of-reach refusal carries a suggested safe pose that the next call follows.</sub>
+out-of-reach refusal carries a suggested safe pose that the next call follows. The arm in the GIF is drawn with
+meshes split from Waveshare's official RoArm-M3 STEP file (`--meshes`); those meshes are not in this repository,
+and without them the simulator draws a box-and-cylinder shell.</sub>
 
 - **Simulation first.** The arm runs in MuJoCo. No hardware is needed to try it.
 - **Safety below the agent.** Every motion is planned into joint waypoints, and every waypoint is checked
@@ -125,7 +127,8 @@ guard test fails the suite if too few of those random commands actually moved th
 
 - Simulation only in 0.1. The real-arm transports, camera tools and pick/place skills are not in this release.
 - The simulated arm is built from boxes and cylinders on the arm's kinematic tree: a visual shell in the arm's
-  colours, and hidden capsules and boxes for collision. No vendor meshes or CAD files are shipped.
+  colours, and hidden capsules and boxes for collision. No vendor meshes or CAD files are shipped; the demo
+  script can draw the arm with your own copy (`scripts/record_demo.py --meshes`).
 - The minimum clearance is checked against the table plane only. Objects on the table are not modelled yet.
 - The simulation holds joints against gravity like stiff position servos. Real servos sag and lag more; the
   real-arm milestone adds measured margins.
