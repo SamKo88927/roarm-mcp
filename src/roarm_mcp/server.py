@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import anyio
 from mcp.server.fastmcp import FastMCP
@@ -36,8 +36,11 @@ def tool_result(payload: dict[str, Any]) -> CallToolResult:
     )
 
 
-def create_server(arm: Arm) -> FastMCP:
-    server = FastMCP("roarm-mcp", instructions=INSTRUCTIONS, log_level="WARNING")
+LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+
+
+def create_server(arm: Arm, host: str = "127.0.0.1", port: int = 8000, log_level: LogLevel = "WARNING") -> FastMCP:
+    server = FastMCP("roarm-mcp", instructions=INSTRUCTIONS, host=host, port=port, log_level=log_level)
     read = ToolAnnotations(readOnlyHint=True, idempotentHint=True, openWorldHint=False)
     act = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True)
 

@@ -25,19 +25,16 @@ and without them the simulator draws a box-and-cylinder shell.</sub>
 
 ## Quick start
 
-Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
+Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/). No clone needed:
 
 ```sh
-git clone https://github.com/SamKo88927/roarm-mcp
-cd roarm-mcp
-uv sync
-uv run roarm-mcp --help
+uvx --from git+https://github.com/SamKo88927/roarm-mcp roarm-mcp --help
 ```
 
 ### Claude Code
 
 ```sh
-claude mcp add roarm -- uv --directory /absolute/path/to/roarm-mcp run roarm-mcp
+claude mcp add roarm -- uvx --from git+https://github.com/SamKo88927/roarm-mcp roarm-mcp
 ```
 
 ### Claude Desktop and other MCP clients
@@ -46,12 +43,22 @@ claude mcp add roarm -- uv --directory /absolute/path/to/roarm-mcp run roarm-mcp
 {
   "mcpServers": {
     "roarm": {
-      "command": "uv",
-      "args": ["--directory", "/absolute/path/to/roarm-mcp", "run", "roarm-mcp"]
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/SamKo88927/roarm-mcp", "roarm-mcp"]
     }
   }
 }
 ```
+
+### Options
+
+| Flag | Effect |
+| --- | --- |
+| `--trace FILE` | Append every tool call, its arguments and its verdict to a JSONL file |
+| `--http` | Serve streamable HTTP on `--host`/`--port` (default `127.0.0.1:8000`) instead of stdio |
+| `--allow-remote` | Required for a non-loopback `--host`. The HTTP endpoint has no authentication |
+| `--fast` | Run the simulation faster than real time |
+| `--log-level` | `DEBUG` to `ERROR`. Logs go to stderr only, so stdio stays clean |
 
 Then ask, for example: *"Check the limits, then move the gripper to 40 mm above the table at x=220, y=80."*
 
@@ -89,7 +96,8 @@ A refused call returns `isError: true` with structured content like:
 
 Refusal codes: `OUT_OF_REACH`, `TOO_CLOSE`, `TOO_HIGH`, `TABLE_CLEARANCE`, `TABLE_COLLISION`, `SELF_COLLISION`,
 `JOINT_LIMIT`, `UNREACHABLE` (no joint solution within tolerance), `BAD_TARGET`, `BAD_JOINTS`, `BAD_GRIPPER`,
-`BUSY`, `STOPPED`, `ENVELOPE_BREACH`.
+`BUSY`, `STOPPED`, `ENVELOPE_BREACH`, `INTERNAL_ERROR` (a fault inside the server; logged and traced, and the arm
+is free for the next call).
 
 ## Safety model
 
@@ -113,6 +121,7 @@ Details and the default numbers are in [docs/safety.md](docs/safety.md). In shor
 ## Development
 
 ```sh
+git clone https://github.com/SamKo88927/roarm-mcp && cd roarm-mcp
 uv sync
 uv run ruff check . && uv run ruff format --check .
 uv run pyright          # strict
@@ -139,6 +148,9 @@ guard test fails the suite if too few of those random commands actually moved th
 2. Camera tools: `look` returns a frame to a multimodal model, `locate` maps a chosen pixel to table coordinates.
 3. Pick and place skills.
 4. A reproducible benchmark that compares how well different models operate the arm.
+
+Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Report security issues as described in
+[SECURITY.md](SECURITY.md).
 
 ## License
 

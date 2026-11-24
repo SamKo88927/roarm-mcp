@@ -14,4 +14,11 @@
   desk. Collision shapes are unchanged and hidden; safety checks use collision geoms only.
 - README demo GIF, generated from the real code path by `scripts/record_demo.py`. `--meshes DIR` draws the arm
   with local per-link STL meshes (not shipped); the README GIF uses meshes from Waveshare's official STEP.
-- CI: ruff, pyright strict, pytest with coverage on Python 3.11 to 3.13.
+- Server faults (planning or transport exceptions) return an `INTERNAL_ERROR` refusal, are logged to stderr and
+  traced, and always release the motion lock.
+- CLI: `--host`, `--port`, `--log-level`; a non-loopback HTTP host needs `--allow-remote`, because the endpoint
+  has no authentication. Logs never go to stdout.
+- Install with `uvx --from git+https://github.com/SamKo88927/roarm-mcp roarm-mcp`; checked from a clean
+  environment with a real stdio MCP client.
+- CI: ruff, pyright strict, pytest with a 90% coverage floor on Python 3.11 to 3.13 (Linux) and 3.13 (macOS),
+  package build. Dependabot for Actions and Python dependencies.

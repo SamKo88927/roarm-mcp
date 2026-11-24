@@ -21,6 +21,8 @@ code the agent cannot reach.
    `ENVELOPE_BREACH`.
 6. **One motion at a time.** A second motion while one runs is refused with `BUSY`. `stop()` takes effect at the
    next waypoint, and the arm holds where it is.
+7. **Faults are refusals.** If planning or the transport raises, the call returns `INTERNAL_ERROR` with the
+   exception text, the fault is logged to stderr and recorded in the trace, and the motion lock is released.
 
 ## Default envelope
 

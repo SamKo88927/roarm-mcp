@@ -1,0 +1,41 @@
+name: Release
+
+# Runs only when a version tag (v*) is pushed. Publishing uses PyPI trusted publishing: no token is stored here.
+# One-time setup on pypi.org: add a pending publisher for this repository, workflow release.yml, environment pypi.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.4.0
+        with:
+          python-version: "3.13"
+      - run: uv sync --locked
+      - run: uv run pytest -q
+      - name: Tag matches package version
+        run: test "${GITHUB_REF_NAME#v}" = "$(uv run python -c 'import roarm_mcp; print(roarm_mcp.__version__)')"
+      - run: uv build
+      - uses: actions/upload-artifact@v5
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

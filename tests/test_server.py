@@ -75,3 +75,15 @@ async def test_resources() -> None:
 def test_real_flag_refuses_cleanly(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--real"]) == 2
     assert "simulation only" in capsys.readouterr().err
+
+
+def test_http_refuses_non_loopback_without_opt_in(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as e:
+        main(["--http", "--host", "0.0.0.0"])
+    assert e.value.code == 2
+    assert "no authentication" in capsys.readouterr().err
+
+
+def test_bad_port_is_rejected() -> None:
+    with pytest.raises(SystemExit):
+        main(["--port", "70000"])

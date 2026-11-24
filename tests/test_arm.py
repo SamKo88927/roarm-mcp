@@ -122,3 +122,21 @@ def test_following_a_suggestion_is_always_accepted() -> None:
         assert again["ok"] is True, (start, target, s, again.get("refusal"))
         followed += 1
     assert followed >= 10
+
+
+def test_transport_fault_is_a_traced_refusal_and_releases_the_lock() -> None:
+    transport = SimTransport(realtime=False)
+    arm = Arm(transport)
+    real_follow = transport.follow
+
+    def broken_follow(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("serial link dropped")
+
+    transport.follow = broken_follow  # type: ignore[method-assign]
+    r = arm.move_to(250, 0, 60, 90, 0)
+    assert r["ok"] is False
+    assert r["refusal"]["code"] == "INTERNAL_ERROR"
+    assert "serial link dropped" in r["refusal"]["message"]
+    assert arm.trace.latest(1)[0]["result"]["refusal"]["code"] == "INTERNAL_ERROR"
+    transport.follow = real_follow  # type: ignore[method-assign]
+    assert arm.move_to(250, 0, 60, 90, 0)["ok"] is True  # the motion lock was released

@@ -6,6 +6,7 @@ Each motion runs plan -> check every waypoint -> execute -> monitor what actuall
 
 from __future__ import annotations
 
+import logging
 import math
 import threading
 from collections.abc import Callable, Sequence
@@ -19,6 +20,8 @@ from .sim import ArmModel, FollowResult, Joints, Pose, Vec
 from .trace import Trace
 
 Result = dict[str, Any]
+
+log = logging.getLogger("roarm_mcp")
 
 
 class Transport(Protocol):
@@ -110,13 +113,17 @@ class Arm:
             plan = planner(current)
             if isinstance(plan, Refusal):
                 result = {"ok": False, "refusal": plan.to_dict(), "state": self._state(current)}
-                self.trace.record(tool, arguments, result)
-                return result
-            result = self._execute(plan, speed)
-            self.trace.record(tool, arguments, result)
-            return result
+            else:
+                result = self._execute(plan, speed)
+        except Exception as exc:
+            # A fault in planning or in the transport must not leave the model guessing or the lock held.
+            log.exception("%s failed", tool)
+            refusal = Refusal("INTERNAL_ERROR", f"{tool} failed inside the server: {type(exc).__name__}: {exc}")
+            result = {"ok": False, "refusal": refusal.to_dict()}
         finally:
             self._motion.release()
+        self.trace.record(tool, arguments, result)
+        return result
 
     def _execute(self, plan: Plan, speed: float) -> Result:
         speed = float(np.clip(speed, 0.05, 1.0))
