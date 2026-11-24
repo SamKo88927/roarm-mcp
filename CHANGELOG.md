@@ -8,4 +8,7 @@
 - Safety layer: frozen envelope, IK convergence check, per-waypoint checks, runtime monitor, refusal codes with
   checked-safe suggestions.
 - Tests: unit, property-based (Hypothesis), MCP client/server, concurrency (stop during motion).
+- Refusal suggestions are re-checked as the exact rounded pose a model will send back, so following one is
+  always accepted (regression test included).
+- README demo GIF, generated from the real code path by `scripts/record_demo.py`.
 - CI: ruff, pyright strict, pytest with coverage on Python 3.11 to 3.13.

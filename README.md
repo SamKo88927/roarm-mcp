@@ -3,6 +3,14 @@
 An [MCP](https://modelcontextprotocol.io) server that lets LLM agents drive a
 [Waveshare RoArm-M3](https://www.waveshare.com/wiki/RoArm-M3) desk arm, with a safety layer the agent cannot bypass.
 
+<p align="center">
+  <img src="docs/media/demo.gif" alt="Simulated RoArm-M3 moving to checked targets; a below-table and an out-of-reach command are refused, and the arm then follows the suggested safe pose" width="640">
+</p>
+
+<sub>Every frame comes from the same `Arm`, safety layer and simulator the MCP server uses
+(`uv run --extra render python scripts/record_demo.py docs/media/demo.gif`). Refused targets turn red, and the
+out-of-reach refusal carries a suggested safe pose that the next call follows.</sub>
+
 - **Simulation first.** The arm runs in MuJoCo. No hardware is needed to try it.
 - **Safety below the agent.** Every motion is planned into joint waypoints, and every waypoint is checked
   (joint limits, self-collision, arm-table collision, clearance of every link and of the tool tip) before

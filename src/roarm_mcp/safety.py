@@ -249,9 +249,25 @@ class Governor:
                 lo = mid
             else:
                 hi = mid
-        if lo < 0.05:
+        # The bisection ends on the feasibility boundary, where rounding alone can tip the pose over the edge.
+        # Back off and re-check the exact rounded pose the model will send, so the suggestion is always accepted.
+        safe: Pose | None = None
+        t = lo - 0.01  # a little margin: the arm will start from the measured pose, not the planned one
+        while t >= 0.05:
+            candidate = at(t)
+            rounded = Pose(
+                _round(candidate.x),
+                _round(candidate.y),
+                _round(candidate.z),
+                math.radians(_round(math.degrees(candidate.pitch))),
+                math.radians(_round(math.degrees(candidate.roll))),
+            )
+            if isinstance(self.plan_pose(current, rounded), Plan):
+                safe, lo = rounded, t
+                break
+            t -= 0.02
+        if safe is None:
             return result
-        safe = at(lo)
         return Refusal(
             result.code,
             result.message,

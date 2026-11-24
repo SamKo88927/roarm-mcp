@@ -103,3 +103,22 @@ def test_trace_file(tmp_path: Path) -> None:
     arm.stop()
     lines = [json.loads(line) for line in path.read_text().splitlines()]
     assert [e["tool"] for e in lines] == ["move_to", "stop"]
+
+
+def test_following_a_suggestion_is_always_accepted() -> None:
+    # Regression: suggestions sat on the reach boundary, so the rounded pose a model sends back was refused.
+    rng = np.random.default_rng(7)
+    arm = Arm(SimTransport(realtime=False))
+    followed = 0
+    for _ in range(25):
+        start = (float(rng.uniform(150, 330)), float(rng.uniform(-150, 150)), float(rng.uniform(25, 150)))
+        assert arm.move_to(*start)["ok"] is True
+        target = (float(rng.uniform(-700, 700)), float(rng.uniform(-700, 700)), float(rng.uniform(-150, 500)))
+        r = arm.move_to(*target)
+        if r["ok"] or "suggestion" not in r["refusal"]:
+            continue
+        s = r["refusal"]["suggestion"]
+        again = arm.move_to(s["x_mm"], s["y_mm"], s["z_mm"], s["pitch_deg"], s["roll_deg"])
+        assert again["ok"] is True, (start, target, s, again.get("refusal"))
+        followed += 1
+    assert followed >= 10
