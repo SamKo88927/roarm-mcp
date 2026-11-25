@@ -9,11 +9,13 @@ from __future__ import annotations
 import logging
 import math
 import threading
+import time
 from collections.abc import Callable, Sequence
 from typing import Any, Protocol
 
 import numpy as np
 
+from .episodes import Episode, EpisodeRecorder
 from .model import GRIPPER_OPEN, HOME, JOINT_NAMES, Tool
 from .safety import Envelope, Governor, Plan, Refusal
 from .sim import ArmModel, FollowResult, Joints, Pose, Vec
@@ -49,9 +51,11 @@ class Arm:
         envelope: Envelope | None = None,
         trace: Trace | None = None,
         tool: Tool | None = None,
+        recorder: EpisodeRecorder | None = None,
     ):
         self.transport = transport
         self.tool = tool
+        self.recorder = recorder
         self.governor = Governor(envelope, tool)
         self.envelope = self.governor.envelope
         self.trace = trace or Trace()
@@ -141,14 +145,24 @@ class Arm:
             }
             self.trace.record(tool, arguments, result)
             return result
+        episode: Episode | None = None
         try:
             self._stop.clear()
             current = self.transport.read_joints()
+            episode = Episode(
+                tool,
+                arguments,
+                self.transport.name,
+                self.tool.name if self.tool else None,
+                current.copy(),
+                clock=getattr(self.transport, "now", time.monotonic),
+            )
+            episode.sample(current)
             plan = planner(current)
             if isinstance(plan, Refusal):
                 result = {"ok": False, "refusal": plan.to_dict(), "state": self._state(current)}
             else:
-                result = self._execute(plan, speed)
+                result = self._execute(plan, speed, episode)
         except Exception as exc:
             # A fault in planning or in the transport must not leave the model guessing or the lock held.
             log.exception("%s failed", tool)
@@ -156,17 +170,22 @@ class Arm:
             result = {"ok": False, "refusal": refusal.to_dict()}
         finally:
             self._motion.release()
+        if self.recorder is not None and episode is not None:
+            self.recorder.save(episode, result)
         self.trace.record(tool, arguments, result)
         return result
 
-    def _execute(self, plan: Plan, speed: float) -> Result:
+    def _execute(self, plan: Plan, speed: float, episode: Episode) -> Result:
         speed = float(np.clip(speed, 0.05, 1.0))
         period = self.envelope.max_waypoint_step / (self.envelope.max_joint_speed * speed)
+        episode.period_s = period
+        episode.planned = [np.asarray(w, dtype=np.float64) for w in plan.waypoints]
         lowest = [math.inf]
         breach = threading.Event()
 
         def monitor(q: Vec) -> None:
             self._remember(q)
+            episode.sample(q)
             clearance = self._monitor.table_clearance_mm(q)
             lowest[0] = min(lowest[0], clearance)
             if clearance < self.envelope.min_clearance_mm or self._monitor.contacts(q):
@@ -178,6 +197,7 @@ class Arm:
         followed = self.transport.follow(plan.waypoints, period, should_stop, monitor)
         final = self.transport.read_joints()
         self._remember(final)
+        episode.sample(final)
         if breach.is_set():
             refusal = Refusal(
                 "ENVELOPE_BREACH",

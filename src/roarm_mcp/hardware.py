@@ -257,6 +257,9 @@ class SerialTransport:
     def read_joints(self) -> Vec:
         return self._frame_to_q(self._feedback())
 
+    def now(self) -> float:
+        return time.monotonic()
+
     def _frame_to_q(self, frame: dict[str, Any]) -> Vec:
         q = np.array([frame["b"], frame["s"], frame["e"], frame["t"], frame["r"], 0.0], dtype=np.float64)
         q[5] = self.gripper.from_raw(float(frame["g"]))

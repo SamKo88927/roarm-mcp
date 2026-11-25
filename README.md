@@ -71,6 +71,7 @@ claude mcp add roarm -- uvx roarm-mcp
 | `--gripper-map FILE` | With `--real`: `{"raw_closed": ..., "raw_open": ...}` measured on your claw, in firmware radians |
 | `--stock-gripper` | With `--real`: the arm has the stock claw. `--real` needs this or `--gripper-map` |
 | `--live-port PORT` | Also stream the measured joints as Server-Sent Events on `http://127.0.0.1:PORT/state` for a 3D view (read only, loopback only) |
+| `--record DIR` | Save every motion as an episode (plan, measured joints with timestamps, result). `python -m roarm_mcp.replay DIR/*.json` replays them in the simulator and reports lag, joint error and tool error |
 | `--tool-geometry FILE` | Collision boxes for a claw or camera fitted to the wrist (see `tests/data/example_tool.json`); every safety check then keeps them clear too |
 | `--min-clearance-mm` | Smallest allowed arm-to-table distance. Default 15 in simulation, 60 with `--real`, because the model does not know about tools or cameras you fitted |
 | `--log-level` | `DEBUG` to `ERROR`. Logs go to stderr only, so stdio stays clean |

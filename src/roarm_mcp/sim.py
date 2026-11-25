@@ -185,6 +185,10 @@ class SimTransport:
     def read_joints(self) -> Vec:
         return self.data.qpos.copy()
 
+    def now(self) -> float:
+        """Simulated seconds: episodes recorded faster than real time still carry true motion timing."""
+        return float(self.data.time)
+
     def _step(self, n: int) -> None:
         start = time.monotonic()
         for i in range(n):

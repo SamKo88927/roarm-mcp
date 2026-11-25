@@ -55,6 +55,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         "view (read only)",
     )
     parser.add_argument(
+        "--record",
+        type=Path,
+        metavar="DIR",
+        help="save every motion as an episode JSON (plan, measured joints, result) in DIR; replay them in the "
+        "simulator with `python -m roarm_mcp.replay`",
+    )
+    parser.add_argument(
         "--tool-geometry",
         type=Path,
         help='JSON {"name": ..., "boxes": [{"name", "center_mm", "half_size_mm"}]}: collision boxes for a claw or '
@@ -143,7 +150,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         transport = SimTransport(realtime=not args.fast, tool=tool)
     clearance = args.min_clearance_mm if args.min_clearance_mm is not None else (60.0 if args.real else 15.0)
-    arm = Arm(transport, envelope=Envelope(min_clearance_mm=clearance), trace=Trace(args.trace), tool=tool)
+    from .episodes import EpisodeRecorder
+
+    recorder = EpisodeRecorder(args.record) if args.record else None
+    arm = Arm(
+        transport,
+        envelope=Envelope(min_clearance_mm=clearance),
+        trace=Trace(args.trace),
+        tool=tool,
+        recorder=recorder,
+    )
     live = None
     if args.live_port is not None:
         from .live import LiveState

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `--record DIR` saves each motion as an episode: plan, measured joints with timestamps (simulated time in the
+  simulator), result. `python -m roarm_mcp.replay` re-runs an episode's plan in the simulator and reports the best-fit
+  lag and the joint and tool errors between what was measured and what the model predicts.
 - `--live-port PORT`: a read-only Server-Sent Events stream of the measured joints and tool pose
   (`GET /state`, 20 Hz while moving, 2 Hz idle) on 127.0.0.1, for live 3D views.
 - `--tool-geometry FILE`: collision boxes for a claw, camera or clip fitted to the wrist, in the wrist-roll link
