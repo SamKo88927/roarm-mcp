@@ -58,3 +58,34 @@ def test_only_state_is_served(live: LiveState) -> None:
     with pytest.raises(urllib.error.HTTPError) as e:
         urllib.request.urlopen(f"http://127.0.0.1:{live.port}/move", timeout=5)
     assert e.value.code == 404
+
+
+def test_a_dead_arm_is_flagged_not_shown_as_live() -> None:
+    class Dying(SimTransport):
+        dead = False
+
+        def read_joints(self):  # type: ignore[override]
+            if self.dead:
+                raise RuntimeError("no feedback")
+            return super().read_joints()
+
+    transport = Dying(realtime=False)
+    arm = Arm(transport)
+    server = LiveState(arm, port=0).start()
+    try:
+        (first,) = _events(server.port, 1)
+        assert first["read_error"] is None and first["measured_at"] is not None
+        transport.dead = True
+        later = _events(server.port, 3)[-1]
+        assert later["read_error"] == "RuntimeError: no feedback"
+        assert later["measured_at"] == first["measured_at"]  # the pose is old, and says so
+    finally:
+        server.close()
+
+
+def test_clearance_follows_the_hand_not_the_turret() -> None:
+    arm = Arm(SimTransport(realtime=False))
+    high = arm.get_state()["state"]["min_clearance_mm"]
+    assert arm.move_to(250, 0, 80, speed=1.0)["ok"]
+    low = arm.get_state()["state"]["min_clearance_mm"]
+    assert low < high - 20

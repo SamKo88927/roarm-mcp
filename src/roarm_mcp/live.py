@@ -1,11 +1,16 @@
 """Live arm state for a 3D view: Server-Sent Events on a loopback HTTP port.
 
-    GET /state   text/event-stream; one `data:` JSON line per update, about LIVE_HZ times a second while the
-                 arm moves and every IDLE_PERIOD_S while it is idle.
+    GET /state   text/event-stream; one `data:` JSON line per new measurement while the arm moves (at most LIVE_HZ
+                 a second) and every IDLE_PERIOD_S while it is idle.
 
 Each event:
-    {"t": unix seconds, "backend": "sim" | "real", "moving": bool, "joints_rad": [base, shoulder, elbow,
-     wrist_pitch, wrist_roll, gripper], "tool": {...}, "min_clearance_mm": ...}
+    {"t": unix seconds sent, "measured_at": unix seconds the joints were measured, "seq": measurement counter,
+     "read_error": null or why the last read of the arm failed, "backend": "sim" | "real", "moving": bool,
+     "joints_rad": [base, shoulder, elbow, wrist_pitch, wrist_roll, gripper], "joints_deg": {...},
+     "gripper_opening": 0..1, "tool": {x_mm, y_mm, z_mm, pitch_deg, roll_deg}, "min_clearance_mm": ...}
+
+A viewer must judge freshness by `measured_at` (or a `seq` that stops advancing) and `read_error`, never by `t`:
+if the arm stops answering, events keep coming with the last measured pose.
 
 Joint angles use the same frames and order as the MCP tools (radians; gripper 0 = closed). The stream is read
 only: nothing sent to this port can move the arm. It binds to 127.0.0.1 only.
@@ -22,7 +27,7 @@ from typing import Any
 
 from .arm import Arm
 
-LIVE_HZ = 20
+LIVE_HZ = 20  # upper bound; events follow new measurements (about 12 Hz on a moving arm)
 IDLE_PERIOD_S = 0.5
 
 log = logging.getLogger("roarm_mcp.live")

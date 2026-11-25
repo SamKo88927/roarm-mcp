@@ -69,6 +69,10 @@ class ArmModel:
             if int(self.model.geom_bodyid[g]) not in (0, base_body)
             and (int(self.model.geom_contype[g]) or int(self.model.geom_conaffinity[g]))
         }
+        # The turret only spins about the vertical axis, so its height above the table never changes: leave it out of
+        # the table clearance, or it would pin the reported minimum at its own constant height. It stays in contacts.
+        turret = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_BODY, "link1")
+        self.clearance_geoms: set[int] = {g for g in self.moving_geoms if int(self.model.geom_bodyid[g]) != turret}
 
     def _set(self, q: Joints) -> None:
         self.data.qpos[:] = np.asarray(q, dtype=np.float64)
@@ -104,7 +108,7 @@ class ArmModel:
         self._set(q)
         best = float(self.data.site_xpos[self.tcp][2])
         fromto = np.zeros(6)
-        for g in self.moving_geoms:
+        for g in self.clearance_geoms:
             dist = mj.mj_geomDistance(self.model, self.data, g, self.table, 0.2, fromto)
             best = min(best, float(dist))
         return best * 1000

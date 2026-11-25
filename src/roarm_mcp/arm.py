@@ -66,6 +66,8 @@ class Arm:
         self._view_lock = threading.Lock()
         self._latest_q: Vec = np.asarray(HOME, dtype=np.float64)
         self._latest_set = False
+        self._latest_at = 0.0  # unix time the joints were measured
+        self._read_error: str | None = None
         self.state_seq = 0  # bumps whenever new measured joints arrive (for live viewers)
 
     # ------------------------------------------------------------------ reading
@@ -91,6 +93,8 @@ class Arm:
     def _remember(self, q: Vec) -> None:
         self._latest_q = np.asarray(q, dtype=np.float64).copy()
         self._latest_set = True
+        self._latest_at = time.time()
+        self._read_error = None
         self.state_seq += 1
 
     def is_moving(self) -> bool:
@@ -100,7 +104,8 @@ class Arm:
         """Re-read the joints from the transport (live viewers call this while the arm is idle)."""
         try:
             self._remember(self.transport.read_joints())
-        except Exception:
+        except Exception as exc:
+            self._read_error = f"{type(exc).__name__}: {exc}"
             log.debug("live refresh failed", exc_info=True)
 
     def latest_state(self) -> Result:
@@ -108,7 +113,13 @@ class Arm:
         if not self._latest_set:
             self.refresh_state()
         q = self._latest_q
-        return {**self._state(q), "joints_rad": [round(float(v), 4) for v in q]}
+        return {
+            **self._state(q),
+            "joints_rad": [round(float(v), 4) for v in q],
+            "seq": self.state_seq,
+            "measured_at": round(self._latest_at, 3) if self._latest_set else None,
+            "read_error": self._read_error,
+        }
 
     def get_state(self) -> Result:
         q = self.transport.read_joints()
