@@ -15,7 +15,7 @@ from typing import Any
 
 import numpy as np
 
-from .model import GRIPPER_OPEN, HOME, JOINT_NAMES
+from .model import GRIPPER_OPEN, HOME, JOINT_NAMES, Tool
 from .sim import ArmModel, Joints, Pose, Vec, interpolate
 
 MEASUREMENT_TOL = 0.01  # rad; servo readings settle this close to a commanded limit
@@ -82,9 +82,10 @@ def _round(v: float, nd: int = 1) -> float:
 class Governor:
     """Plans and checks motions. Owns its own ArmModel; use from one thread at a time."""
 
-    def __init__(self, envelope: Envelope | None = None) -> None:
+    def __init__(self, envelope: Envelope | None = None, tool: Tool | None = None) -> None:
         self.envelope = envelope or Envelope()
-        self.arm = ArmModel()
+        self.tool = tool
+        self.arm = ArmModel(tool)
         m = self.envelope.joint_margin_rad
         self.lower: Vec = self.arm.lower.copy()
         self.upper: Vec = self.arm.upper.copy()
@@ -301,5 +302,6 @@ class Governor:
                 for i, name in enumerate(JOINT_NAMES[:5])
             },
             "gripper_opening": [0.0, 1.0],
+            "fitted_tool": self.tool.name if self.tool else None,
             "fixed_at_startup": True,
         }

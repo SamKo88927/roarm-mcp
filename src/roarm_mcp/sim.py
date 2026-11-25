@@ -12,7 +12,7 @@ import mujoco as _mujoco
 import numpy as np
 from numpy.typing import NDArray
 
-from .model import GRIPPER_OPEN, HOME, JOINT_NAMES, SHOULDER_HEIGHT_M, build_mjcf
+from .model import GRIPPER_OPEN, HOME, JOINT_NAMES, SHOULDER_HEIGHT_M, Tool, build_mjcf
 
 # MuJoCo's compiled bindings ship no type stubs; keep the untyped surface behind one explicit name.
 mj: Any = _mujoco
@@ -53,8 +53,8 @@ class ArmModel:
     Not thread-safe: give each thread its own instance.
     """
 
-    def __init__(self) -> None:
-        self.model = mj.MjModel.from_xml_string(build_mjcf())
+    def __init__(self, tool: Tool | None = None) -> None:
+        self.model = mj.MjModel.from_xml_string(build_mjcf(tool))
         self.data = mj.MjData(self.model)
         self.tcp = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_SITE, "tcp")
         self.table = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_GEOM, "table")
@@ -175,9 +175,9 @@ class SimTransport:
 
     name = "sim"
 
-    def __init__(self, realtime: bool = True) -> None:
+    def __init__(self, realtime: bool = True, tool: Tool | None = None) -> None:
         self.realtime = realtime
-        self.model = mj.MjModel.from_xml_string(build_mjcf())
+        self.model = mj.MjModel.from_xml_string(build_mjcf(tool))
         self.data = mj.MjData(self.model)
         mj.mj_resetDataKeyframe(self.model, self.data, 0)
         mj.mj_forward(self.model, self.data)

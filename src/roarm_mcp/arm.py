@@ -14,7 +14,7 @@ from typing import Any, Protocol
 
 import numpy as np
 
-from .model import GRIPPER_OPEN, HOME, JOINT_NAMES
+from .model import GRIPPER_OPEN, HOME, JOINT_NAMES, Tool
 from .safety import Envelope, Governor, Plan, Refusal
 from .sim import ArmModel, FollowResult, Joints, Pose, Vec
 from .trace import Trace
@@ -43,15 +43,22 @@ def _deg(v: float) -> float:
 
 
 class Arm:
-    def __init__(self, transport: Transport, envelope: Envelope | None = None, trace: Trace | None = None):
+    def __init__(
+        self,
+        transport: Transport,
+        envelope: Envelope | None = None,
+        trace: Trace | None = None,
+        tool: Tool | None = None,
+    ):
         self.transport = transport
-        self.governor = Governor(envelope)
+        self.tool = tool
+        self.governor = Governor(envelope, tool)
         self.envelope = self.governor.envelope
         self.trace = trace or Trace()
         self._motion = threading.Lock()
         self._stop = threading.Event()
-        self._monitor = ArmModel()  # used only inside the motion lock
-        self._view = ArmModel()  # used only under _view_lock
+        self._monitor = ArmModel(tool)  # used only inside the motion lock
+        self._view = ArmModel(tool)  # used only under _view_lock
         self._view_lock = threading.Lock()
 
     # ------------------------------------------------------------------ reading

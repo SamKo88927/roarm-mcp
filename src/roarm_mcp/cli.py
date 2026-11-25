@@ -49,6 +49,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="with --real: the arm has the stock claw (1.57 rad open, 3.13 rad closed)",
     )
     parser.add_argument(
+        "--tool-geometry",
+        type=Path,
+        help='JSON {"name": ..., "boxes": [{"name", "center_mm", "half_size_mm"}]}: collision boxes for a claw or '
+        "camera fitted to the wrist, in the wrist-roll link frame",
+    )
+    parser.add_argument(
         "--min-clearance-mm",
         type=float,
         help="smallest allowed distance between the arm and the table (default 15 in simulation, 60 with --real: "
@@ -99,11 +105,17 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     # Import late so `--help` and `--real` stay fast and never load MuJoCo.
     from .arm import Arm, Transport
+    from .model import Tool
     from .safety import Envelope
     from .server import LogLevel, create_server
     from .sim import SimTransport
     from .trace import Trace
 
+    try:
+        tool = Tool.load(args.tool_geometry) if args.tool_geometry else None
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        print(f"roarm-mcp: --tool-geometry: {exc}", file=sys.stderr)
+        return 2
     transport: Transport
     if args.real:
         from .hardware import STOCK_GRIPPER, FakeFirmware, GripperMap, SerialTransport, TransportError, open_serial
@@ -121,9 +133,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"roarm-mcp: {exc}", file=sys.stderr)
             return 2
     else:
-        transport = SimTransport(realtime=not args.fast)
+        transport = SimTransport(realtime=not args.fast, tool=tool)
     clearance = args.min_clearance_mm if args.min_clearance_mm is not None else (60.0 if args.real else 15.0)
-    arm = Arm(transport, envelope=Envelope(min_clearance_mm=clearance), trace=Trace(args.trace))
+    arm = Arm(transport, envelope=Envelope(min_clearance_mm=clearance), trace=Trace(args.trace), tool=tool)
     server = create_server(arm, host=args.host, port=args.port, log_level=cast(LogLevel, args.log_level))
     try:
         server.run(transport="streamable-http" if args.http else "stdio")

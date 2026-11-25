@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `--tool-geometry FILE`: collision boxes for a claw, camera or clip fitted to the wrist, in the wrist-roll link
+  frame. They join every contact and table-clearance check; `get_limits` names the fitted tool.
 - Real-arm transport over USB serial (`--real DEVICE`, extra `roarm-mcp[real]`): streams checked waypoints
   with T:102, polls measured joints with T:105, halts and holds on a tracking error, and locks the port so a
   second process cannot drive the same arm. `--dry-run` prints the commands instead. `--real` requires
