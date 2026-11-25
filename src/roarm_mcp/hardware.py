@@ -115,6 +115,16 @@ class LockedPort:
     def write(self, data: bytes) -> int | None:
         return self._port.write(data)
 
+    def reopen(self) -> None:
+        """Close and reopen the port with DTR/RTS still asserted (no ESP32 reset); the lock stays held."""
+        with contextlib.suppress(Exception):
+            self._port.close()
+        time.sleep(0.3)
+        self._port.dtr = True
+        self._port.rts = True
+        self._port.open()
+        time.sleep(0.2)
+
     def close(self) -> None:
         try:
             self._port.close()
@@ -210,6 +220,18 @@ class SerialTransport:
             self.port.write((json.dumps(command) + "\n").encode())
 
     def _feedback(self) -> dict[str, Any]:
+        """One fresh feedback frame. If the arm went silent, reopen the port once and ask again: after some
+        moves the firmware stops answering on an open port until it is reopened, while the arm itself is fine."""
+        try:
+            return self._feedback_once()
+        except TransportError:
+            reopen = getattr(self.port, "reopen", None)
+            if reopen is None:
+                raise
+            reopen()
+            return self._feedback_once()
+
+    def _feedback_once(self) -> dict[str, Any]:
         asked = time.monotonic()
         self._send({"T": 105})
         with self._fresh:
@@ -438,6 +460,8 @@ class FakeFirmware:
         self.lag = lag  # < 1 slows the joints, to test the tracking watchdog
         self.sent: list[dict[str, Any]] = []
         self.silent = False
+        self.recovers_on_reopen = False  # True: a silent arm answers again after reopen(), as observed on hardware
+        self.reopened = 0
         self.hand_stop: float | None = None  # raw value an object blocks the jaws at, from the start side
         self._hand_start = float(self.q[5])
         self._hand_side = 0.0
@@ -486,6 +510,11 @@ class FakeFirmware:
         if not out:
             time.sleep(0.002)
         return out
+
+    def reopen(self) -> None:
+        self.reopened += 1
+        if self.recovers_on_reopen:
+            self.silent = False
 
     def close(self) -> None:
         pass

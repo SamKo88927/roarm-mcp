@@ -182,6 +182,13 @@ def test_silent_arm_is_reported_and_nothing_moves(firmware: FakeFirmware, transp
     assert _moves(firmware) == []
 
 
+def test_a_silent_port_is_reopened_once(firmware: FakeFirmware, transport: SerialTransport) -> None:
+    firmware.silent = True
+    firmware.recovers_on_reopen = True
+    assert np.allclose(transport.read_joints(), HOME, atol=1e-3)
+    assert firmware.reopened == 1
+
+
 def test_tracking_watchdog_halts_a_lagging_arm(firmware: FakeFirmware, transport: SerialTransport) -> None:
     firmware.lag = 0.05  # the joints barely follow, as with a stalled servo
     result = Arm(transport).move_joints([60, 0, 90, 0, 0], speed=1.0)
