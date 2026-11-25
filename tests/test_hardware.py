@@ -32,7 +32,7 @@ def firmware() -> FakeFirmware:
 
 @pytest.fixture
 def transport(firmware: FakeFirmware) -> Iterator[SerialTransport]:
-    t = SerialTransport(firmware, feedback_timeout_s=0.3)
+    t = SerialTransport(firmware, feedback_timeout_s=0.5)
     yield t
     t.close()
 
@@ -80,11 +80,39 @@ def test_move_runs_on_the_real_protocol(firmware: FakeFirmware, transport: Seria
     assert result["state"]["backend"] == "real"
 
 
-def test_gripper_goes_out_in_firmware_units(firmware: FakeFirmware, transport: SerialTransport) -> None:
+def test_real_backend_refuses_to_close_the_gripper(firmware: FakeFirmware, transport: SerialTransport) -> None:
+    # No contact detection or firmware torque limit yet: closing onto an object could strip a printed gear.
     result = Arm(transport).gripper(0.0, speed=1.0)
+    assert not result["ok"]
+    assert result["refusal"]["code"] == "GRIPPER_CLOSE_UNSUPPORTED"
+    assert _moves(firmware) == []
+
+
+def test_custom_claw_opens_in_its_own_units() -> None:
+    # A claw whose raw value grows as it opens, powered on slightly past its closed calibration point.
+    claw = GripperMap(raw_closed=1.18, raw_open=2.58)
+    firmware = FakeFirmware([*HOME[:5], 1.065])
+    transport = SerialTransport(firmware, claw, feedback_timeout_s=0.5)
+    try:
+        arm = Arm(transport)
+        assert arm.get_state()["state"]["gripper_opening"] == 0.0
+        moved = arm.move_to(250, 0, 150, speed=1.0)
+        assert moved["ok"], moved
+        hands = {round(m["hand"], 3) for m in _moves(firmware)}
+        assert hands == {1.18}  # an arm move holds the claw at its measured (clamped) position
+        opened = arm.gripper(0.7, speed=1.0)
+        assert opened["ok"], opened
+        assert _moves(firmware)[-1]["hand"] == pytest.approx(1.18 + 0.7 * 1.4)
+        assert all(1.18 <= m["hand"] <= 2.58 for m in _moves(firmware))
+    finally:
+        transport.close()
+
+
+def test_stream_never_exceeds_twenty_waypoints_per_second(firmware: FakeFirmware, transport: SerialTransport) -> None:
+    t0 = time.monotonic()
+    result = Arm(transport).move_joints([30, 0, 90, 0, 0], speed=1.0)
     assert result["ok"], result
-    assert _moves(firmware)[-1]["hand"] == pytest.approx(3.13)
-    assert result["state"]["gripper_opening"] < 0.02
+    assert time.monotonic() - t0 >= 0.05 * result["plan"]["waypoints"]
 
 
 def test_refused_target_sends_no_motion(firmware: FakeFirmware, transport: SerialTransport) -> None:

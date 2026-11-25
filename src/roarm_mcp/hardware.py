@@ -12,7 +12,10 @@ Protocol (Waveshare RoArm-M3 firmware, JSON lines at 115200 baud):
 Hardware notes, measured on one arm:
 - Opening the port with DTR or RTS low resets the ESP32 on macOS, and the arm then re-runs its power-on motion.
   The port is opened with both lines asserted.
-- Feedback answers at about 11 Hz, so it is polled every FEEDBACK_PERIOD_S, not after every waypoint.
+- Feedback answers at about 11 Hz and arrives late, so it is requested every FEEDBACK_PERIOD_S without blocking
+  the waypoint stream, and tracking is judged against the targets sent in the last PATH_WINDOW_S.
+- There is no torque limit in the stock firmware, so this transport never closes the gripper (see
+  `can_close_gripper`): closing onto an object needs contact detection, which is not written yet.
 - The five arm joints map 1:1 to the simulator (forward kinematics agreed within 3 mm). The gripper does not:
   each claw needs a GripperMap measured on that claw.
 """
@@ -35,6 +38,8 @@ from .model import GRIPPER_OPEN
 from .sim import FollowResult, Joints, Vec
 
 FEEDBACK_PERIOD_S = 0.12
+MIN_PERIOD_S = 0.05  # stream at most 20 waypoints/s, the rate verified on the arm; faster plans run slower
+PATH_WINDOW_S = 0.5  # tracking error = distance from the targets sent in this window (feedback lags ~0.1 s)
 STEPS_PER_RAD = 4096 / (2 * math.pi)
 ACC = 15  # x100 steps/s^2; measured as smooth as unlimited, without hard starts
 SETTLE_S = 1.0
@@ -88,6 +93,7 @@ class GripperMap:
 
 
 # The stock RoArm-M3 claw: about 1.57 rad open and 3.13 rad closed (fully closed reads 3.13; 3.2 squeezes).
+# Other claws differ, even in direction, so the CLI makes the user name the claw instead of defaulting to this.
 STOCK_GRIPPER = GripperMap(raw_closed=3.13, raw_open=1.5708, name="stock")
 
 
@@ -113,20 +119,27 @@ class LockedPort:
 def open_serial(device: str, baudrate: int = 115200) -> Port:  # pragma: no cover - needs the arm
     """Open the arm's serial port without resetting the ESP32 (DTR and RTS asserted before open)."""
     import fcntl
-    import tempfile
+    import shutil
+    import subprocess
 
     try:
         import serial  # pyright: ignore[reportMissingImports]
     except ImportError as exc:
         raise TransportError("the real arm needs pyserial: pip install 'roarm-mcp[real]'") from exc
-    lock = (Path(tempfile.gettempdir()) / f"roarm-mcp-{Path(device).name}.lock").open("w")
+    # /tmp/roarm-<device>.lock is also the lock other RoArm tools on this machine take for the same port.
+    lock = Path(f"/tmp/roarm-{Path(device).name}.lock").open("w")  # noqa: SIM115 - held until close()
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError as exc:
         lock.close()
-        raise TransportError(f"{device} is already in use by another roarm-mcp process") from exc
+        raise TransportError(f"{device} is locked by another program driving this arm") from exc
+    if shutil.which("lsof") and Path(device).exists():
+        holders = subprocess.run(["lsof", device], capture_output=True, text=True, timeout=3).stdout.strip()
+        if holders:
+            lock.close()
+            raise TransportError(f"{device} is already open in another program:\n{holders}")
     port: Any = serial.Serial()
-    port.port, port.baudrate, port.timeout = device, baudrate, 0.05
+    port.port, port.baudrate, port.timeout, port.exclusive = device, baudrate, 0.05, True
     port.dtr = True
     port.rts = True
     try:
@@ -141,6 +154,7 @@ class SerialTransport:
     """Streams checked waypoints to the real arm and reports measured joints."""
 
     name = "real"
+    can_close_gripper = False  # no contact detection or firmware torque limit yet; opening is allowed
 
     def __init__(
         self,
@@ -213,7 +227,9 @@ class SerialTransport:
 
     # ------------------------------------------------------------------ Transport
     def read_joints(self) -> Vec:
-        frame = self._feedback()
+        return self._frame_to_q(self._feedback())
+
+    def _frame_to_q(self, frame: dict[str, Any]) -> Vec:
         q = np.array([frame["b"], frame["s"], frame["e"], frame["t"], frame["r"], 0.0], dtype=np.float64)
         q[5] = self.gripper.from_raw(float(frame["g"]))
         return q
@@ -225,18 +241,27 @@ class SerialTransport:
         should_stop: Callable[[], bool] = lambda: False,
         on_waypoint: Callable[[Vec], None] = lambda _q: None,
     ) -> FollowResult:
-        """Send one waypoint every period_s; poll measured joints every FEEDBACK_PERIOD_S and pass them on.
+        """Send one waypoint every period_s (at least MIN_PERIOD_S) and pass every measured pose on.
 
-        Stops early when should_stop() turns true or the measured joints fall more than max_tracking_error_rad
-        behind the command; the arm is then told to hold its measured pose.
+        Feedback is requested without blocking the stream. Stops early when should_stop() turns true or the
+        measured arm is more than max_tracking_error_rad from every target sent in the last PATH_WINDOW_S; the arm
+        is then told to hold its measured pose. If the arm stops answering mid-motion this raises TransportError;
+        the servos then finish the last waypoint they were sent, which was checked like every other.
         """
+        period_s = max(period_s, MIN_PERIOD_S)
         measured = self.read_joints()
         previous: Vec = measured
-        start = time.monotonic()
-        next_feedback = start + FEEDBACK_PERIOD_S
+        recent: list[tuple[float, Vec]] = [(time.monotonic(), measured)]
+        with self._fresh:
+            seen = self._latest_t
+        start = last_fresh = next_request = time.monotonic()
         done = 0
-        stopped = False
+        stopped = lost = False
         worst = 0.0
+
+        def tracking_error(q: Vec) -> float:
+            return min(_arm_error(q, t) for _, t in recent)
+
         for i, wp in enumerate(waypoints):
             if should_stop():
                 stopped = True
@@ -245,16 +270,31 @@ class SerialTransport:
             self._command(target, previous, period_s)
             previous = target
             done += 1
+            now = time.monotonic()
+            recent = [(t, q) for t, q in recent if now - t <= PATH_WINDOW_S] + [(now, target)]
             due = start + (i + 1) * period_s
             while (now := time.monotonic()) < due:
-                if now >= next_feedback:
-                    measured = self.read_joints()
+                if now >= next_request:
+                    self._send({"T": 105})
+                    next_request = now + FEEDBACK_PERIOD_S
+                with self._fresh:
+                    frame, frame_t = self._latest, self._latest_t
+                if frame is not None and frame_t > seen:
+                    seen, last_fresh = frame_t, now
+                    measured = self._frame_to_q(frame)
                     on_waypoint(measured)
-                    worst = max(worst, _arm_error(measured, target))
-                    next_feedback = time.monotonic() + FEEDBACK_PERIOD_S
+                    worst = max(worst, tracking_error(measured))
                     if worst > self.max_tracking_error_rad or should_stop():
                         break
-                time.sleep(min(0.005, max(0.0, due - time.monotonic())))
+                elif now - last_fresh > self.feedback_timeout_s:
+                    lost = True
+                    break
+                time.sleep(0.005)
+            if lost:
+                raise TransportError(
+                    f"the arm stopped answering mid-motion after {done} waypoints; it is finishing the last checked"
+                    " waypoint it was sent"
+                )
             if worst > self.max_tracking_error_rad:
                 stopped = True
                 break
@@ -313,7 +353,7 @@ class FakeFirmware:
     Joints move toward the last T:102 target at the commanded servo speed. Every command is kept in `sent`.
     """
 
-    def __init__(self, start: Sequence[float], lag: float = 1.0, log: Any = None) -> None:
+    def __init__(self, start: Sequence[float], lag: float = 1.0, log: Any = None, latency_s: float = 0.09) -> None:
         self.q = np.asarray(start, dtype=np.float64).copy()
         self.target = self.q.copy()
         self.speed = np.full(6, 1.0)
@@ -321,6 +361,8 @@ class FakeFirmware:
         self.sent: list[dict[str, Any]] = []
         self.silent = False
         self.log = log  # a text stream: every motion command is echoed there (--dry-run)
+        self.latency_s = latency_s  # feedback arrives this late, like the real arm's ~11 Hz replies
+        self._pending: list[tuple[float, bytes]] = []
         self._out = b"boot log line\n"
         self._t = time.monotonic()
         self._lock = threading.Lock()
@@ -346,11 +388,14 @@ class FakeFirmware:
                 elif cmd["T"] == 105 and not self.silent:
                     b, s, e, t, r, g = (round(float(v), 4) for v in self.q)
                     frame = {"T": 1051, "b": b, "s": s, "e": e, "t": t, "r": r, "g": g, "tB": 0, "tG": 0}
-                    self._out += (json.dumps(frame) + "\n").encode()
+                    self._pending.append((time.monotonic() + self.latency_s, (json.dumps(frame) + "\n").encode()))
         return len(data)
 
     def read(self, size: int = 1) -> bytes:
         with self._lock:
+            now = time.monotonic()
+            self._out += b"".join(data for due, data in self._pending if due <= now)
+            self._pending = [(due, data) for due, data in self._pending if due > now]
             out, self._out = self._out[:size], self._out[size:]
         if not out:
             time.sleep(0.002)

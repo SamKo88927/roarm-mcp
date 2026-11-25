@@ -68,7 +68,9 @@ claude mcp add roarm -- uvx roarm-mcp
 | `--fast` | Run the simulation faster than real time |
 | `--real DEVICE` | Drive the real arm on a serial device such as `/dev/cu.usbserial-XXXX` (`pip install 'roarm-mcp[real]'`). Unverified on hardware |
 | `--dry-run` | With `--real`: talk to a fake arm and print every command that would be sent |
-| `--gripper-map FILE` | With `--real`: `{"raw_closed": ..., "raw_open": ...}` in firmware radians, for a non-stock claw |
+| `--gripper-map FILE` | With `--real`: `{"raw_closed": ..., "raw_open": ...}` measured on your claw, in firmware radians |
+| `--stock-gripper` | With `--real`: the arm has the stock claw. `--real` needs this or `--gripper-map` |
+| `--min-clearance-mm` | Smallest allowed arm-to-table distance. Default 15 in simulation, 60 with `--real`, because the model does not know about tools or cameras you fitted |
 | `--log-level` | `DEBUG` to `ERROR`. Logs go to stderr only, so stdio stays clean |
 
 Then ask, for example: *"Check the limits, then move the gripper to 40 mm above the table at x=220, y=80."*
@@ -145,7 +147,8 @@ guard test fails the suite if too few of those random commands actually moved th
 
 ## Limitations
 
-- The real-arm transport is unverified on hardware. Camera tools and pick/place skills are not written yet.
+- The real-arm transport is unverified on hardware. It opens the gripper but refuses to close it: there is no
+  contact detection or firmware torque limit yet. Camera tools and pick/place skills are not written yet.
 - The simulated arm is built from boxes and cylinders on the arm's kinematic tree: a visual shell in the arm's
   colours, and hidden capsules and boxes for collision. No vendor meshes or CAD files are shipped; the demo
   script can draw the arm with your own copy (`scripts/record_demo.py --meshes`).

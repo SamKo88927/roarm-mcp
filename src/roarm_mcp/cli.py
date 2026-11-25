@@ -41,7 +41,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--gripper-map",
         type=Path,
-        help='JSON {"raw_closed": ..., "raw_open": ...} for a non-stock claw, in firmware radians',
+        help='with --real: JSON {"raw_closed": ..., "raw_open": ...} measured on your claw, in firmware radians',
+    )
+    parser.add_argument(
+        "--stock-gripper",
+        action="store_true",
+        help="with --real: the arm has the stock claw (1.57 rad open, 3.13 rad closed)",
+    )
+    parser.add_argument(
+        "--min-clearance-mm",
+        type=float,
+        help="smallest allowed distance between the arm and the table (default 15 in simulation, 60 with --real: "
+        "the model does not know about tools or cameras you fitted)",
     )
     parser.add_argument("--trace", type=Path, help="append every tool call to this JSONL file")
     parser.add_argument("--http", action="store_true", help="serve streamable HTTP instead of stdio")
@@ -62,8 +73,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if (args.dry_run or args.gripper_map) and not args.real:
-        parser.error("--dry-run and --gripper-map need --real")
+    if (args.dry_run or args.gripper_map or args.stock_gripper) and not args.real:
+        parser.error("--dry-run, --gripper-map and --stock-gripper need --real")
+    if args.real and not (args.gripper_map or args.stock_gripper):
+        parser.error(
+            "--real needs --gripper-map FILE (measured on your claw) or --stock-gripper: claws differ in range and "
+            "direction, and a wrong map drives the jaws into their stops"
+        )
+    if args.gripper_map and args.stock_gripper:
+        parser.error("give --gripper-map or --stock-gripper, not both")
+    if args.min_clearance_mm is not None and not 0 <= args.min_clearance_mm <= 200:
+        parser.error("--min-clearance-mm must be between 0 and 200")
     if not 0 < args.port < 65536:
         parser.error("--port must be between 1 and 65535")
     if args.http and not _is_loopback(args.host) and not args.allow_remote:
@@ -79,6 +99,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     # Import late so `--help` and `--real` stay fast and never load MuJoCo.
     from .arm import Arm, Transport
+    from .safety import Envelope
     from .server import LogLevel, create_server
     from .sim import SimTransport
     from .trace import Trace
@@ -101,7 +122,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
     else:
         transport = SimTransport(realtime=not args.fast)
-    arm = Arm(transport, trace=Trace(args.trace))
+    clearance = args.min_clearance_mm if args.min_clearance_mm is not None else (60.0 if args.real else 15.0)
+    arm = Arm(transport, envelope=Envelope(min_clearance_mm=clearance), trace=Trace(args.trace))
     server = create_server(arm, host=args.host, port=args.port, log_level=cast(LogLevel, args.log_level))
     try:
         server.run(transport="streamable-http" if args.http else "stdio")

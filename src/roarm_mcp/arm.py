@@ -202,6 +202,14 @@ class Arm:
         def planner(q: Vec) -> Plan | Refusal:
             if not (math.isfinite(opening) and 0.0 <= opening <= 1.0):
                 return Refusal("BAD_GRIPPER", "opening must be between 0 (closed) and 1 (open)")
+            current = float(np.clip(q[5] / GRIPPER_OPEN, 0.0, 1.0))
+            if opening < current - 0.02 and not getattr(self.transport, "can_close_gripper", True):
+                return Refusal(
+                    "GRIPPER_CLOSE_UNSUPPORTED",
+                    "this backend cannot close the gripper yet (no contact detection or torque limit); "
+                    "opening is allowed",
+                    {"current_opening": round(current, 3)},
+                )
             goal = self.governor.clip(q)
             goal[5] = opening * GRIPPER_OPEN
             return self.governor.check_path(q, goal)

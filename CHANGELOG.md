@@ -4,8 +4,10 @@
 
 - Real-arm transport over USB serial (`--real DEVICE`, extra `roarm-mcp[real]`): streams checked waypoints
   with T:102, polls measured joints with T:105, halts and holds on a tracking error, and locks the port so a
-  second process cannot drive the same arm. `--dry-run` prints the commands instead. Tested against a fake
-  firmware only; not yet run on hardware.
+  second process cannot drive the same arm. `--dry-run` prints the commands instead. `--real` requires
+  `--gripper-map` or `--stock-gripper`, defaults to 60 mm table clearance, streams at most 20 waypoints/s, and
+  refuses to close the gripper until contact detection exists. Tested against a fake firmware with 90 ms
+  feedback latency only; not yet run on hardware.
 - `serverInfo.version` reports the roarm-mcp version instead of the MCP SDK's.
 - Dockerfile (simulated arm over stdio) and `glama.json`, so MCP directories can start and inspect the server.
 
