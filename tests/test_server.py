@@ -87,3 +87,12 @@ def test_http_refuses_non_loopback_without_opt_in(capsys: pytest.CaptureFixture[
 def test_bad_port_is_rejected() -> None:
     with pytest.raises(SystemExit):
         main(["--port", "70000"])
+
+
+async def test_server_reports_package_version() -> None:
+    from roarm_mcp import __version__
+
+    server = create_server(Arm(SimTransport(realtime=False)))
+    async with create_connected_server_and_client_session(server._mcp_server) as client:  # pyright: ignore[reportPrivateUsage]
+        result = await client.initialize()
+        assert result.serverInfo.version == __version__

@@ -10,6 +10,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import Field
 
+from . import __version__
 from .arm import Arm
 
 INSTRUCTIONS = """\
@@ -41,6 +42,7 @@ LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
 def create_server(arm: Arm, host: str = "127.0.0.1", port: int = 8000, log_level: LogLevel = "WARNING") -> FastMCP:
     server = FastMCP("roarm-mcp", instructions=INSTRUCTIONS, host=host, port=port, log_level=log_level)
+    server._mcp_server.version = __version__  # pyright: ignore[reportPrivateUsage]  # else the SDK reports its own
     read = ToolAnnotations(readOnlyHint=True, idempotentHint=True, openWorldHint=False)
     act = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True)
 

@@ -8,6 +8,10 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    ignore:
+      # mcp 2.x changes the server API; upgrade by hand.
+      - dependency-name: "mcp"
+        update-types: ["version-update:semver-major"]
     groups:
       python:
         patterns: ["*"]

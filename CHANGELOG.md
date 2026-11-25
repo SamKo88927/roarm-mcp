@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- `serverInfo.version` reports the roarm-mcp version instead of the MCP SDK's.
+- Dockerfile (simulated arm over stdio) and `glama.json`, so MCP directories can start and inspect the server.
+
 ## 0.1.1 (2026-11-24)
 
 - Install from PyPI: `uvx roarm-mcp`. README badges.
