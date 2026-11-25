@@ -25,10 +25,24 @@ def _is_loopback(host: str) -> bool:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="roarm-mcp",
-        description="MCP server for the Waveshare RoArm-M3. Runs a MuJoCo-simulated arm.",
+        description="MCP server for the Waveshare RoArm-M3. Runs a MuJoCo-simulated arm unless --real is given.",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    parser.add_argument("--real", action="store_true", help="drive real hardware (not available in this release)")
+    parser.add_argument(
+        "--real",
+        metavar="DEVICE",
+        help="drive the real arm on this serial device, e.g. /dev/cu.usbserial-XXXX (needs roarm-mcp[real])",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="with --real: talk to a fake arm instead and log every command that would be sent",
+    )
+    parser.add_argument(
+        "--gripper-map",
+        type=Path,
+        help='JSON {"raw_closed": ..., "raw_open": ...} for a non-stock claw, in firmware radians',
+    )
     parser.add_argument("--trace", type=Path, help="append every tool call to this JSONL file")
     parser.add_argument("--http", action="store_true", help="serve streamable HTTP instead of stdio")
     parser.add_argument("--host", default="127.0.0.1", help="HTTP bind address (default 127.0.0.1)")
@@ -48,12 +62,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if args.real:
-        print(
-            "roarm-mcp: real hardware is not supported in this release; the server runs in simulation only.",
-            file=sys.stderr,
-        )
-        return 2
+    if (args.dry_run or args.gripper_map) and not args.real:
+        parser.error("--dry-run and --gripper-map need --real")
     if not 0 < args.port < 65536:
         parser.error("--port must be between 1 and 65535")
     if args.http and not _is_loopback(args.host) and not args.allow_remote:
@@ -68,12 +78,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
 
     # Import late so `--help` and `--real` stay fast and never load MuJoCo.
-    from .arm import Arm
+    from .arm import Arm, Transport
     from .server import LogLevel, create_server
     from .sim import SimTransport
     from .trace import Trace
 
-    arm = Arm(SimTransport(realtime=not args.fast), trace=Trace(args.trace))
+    transport: Transport
+    if args.real:
+        from .hardware import STOCK_GRIPPER, FakeFirmware, GripperMap, SerialTransport, TransportError, open_serial
+        from .model import HOME
+
+        try:
+            gripper = GripperMap.load(args.gripper_map) if args.gripper_map else STOCK_GRIPPER
+            if args.dry_run:
+                port = FakeFirmware([*HOME[:5], gripper.to_raw(HOME[5])], log=sys.stderr)
+            else:
+                port = open_serial(args.real)
+            transport = SerialTransport(port, gripper)
+            transport.read_joints()  # fail now, not on the first tool call, if the arm does not answer
+        except (TransportError, OSError, ValueError, KeyError) as exc:
+            print(f"roarm-mcp: {exc}", file=sys.stderr)
+            return 2
+    else:
+        transport = SimTransport(realtime=not args.fast)
+    arm = Arm(transport, trace=Trace(args.trace))
     server = create_server(arm, host=args.host, port=args.port, log_level=cast(LogLevel, args.log_level))
     try:
         server.run(transport="streamable-http" if args.http else "stdio")
