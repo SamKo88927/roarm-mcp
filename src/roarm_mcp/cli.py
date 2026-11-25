@@ -49,6 +49,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="with --real: the arm has the stock claw (1.57 rad open, 3.13 rad closed)",
     )
     parser.add_argument(
+        "--live-port",
+        type=int,
+        help="also stream the arm's measured joints as Server-Sent Events on http://127.0.0.1:PORT/state, for a 3D "
+        "view (read only)",
+    )
+    parser.add_argument(
         "--tool-geometry",
         type=Path,
         help='JSON {"name": ..., "boxes": [{"name", "center_mm", "half_size_mm"}]}: collision boxes for a claw or '
@@ -88,6 +94,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     if args.gripper_map and args.stock_gripper:
         parser.error("give --gripper-map or --stock-gripper, not both")
+    if args.live_port is not None and not 0 < args.live_port < 65536:
+        parser.error("--live-port must be between 1 and 65535")
     if args.min_clearance_mm is not None and not 0 <= args.min_clearance_mm <= 200:
         parser.error("--min-clearance-mm must be between 0 and 200")
     if not 0 < args.port < 65536:
@@ -136,11 +144,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         transport = SimTransport(realtime=not args.fast, tool=tool)
     clearance = args.min_clearance_mm if args.min_clearance_mm is not None else (60.0 if args.real else 15.0)
     arm = Arm(transport, envelope=Envelope(min_clearance_mm=clearance), trace=Trace(args.trace), tool=tool)
+    live = None
+    if args.live_port is not None:
+        from .live import LiveState
+
+        try:
+            live = LiveState(arm, args.live_port).start()
+        except OSError as exc:
+            print(f"roarm-mcp: --live-port {args.live_port}: {exc}", file=sys.stderr)
+            return 2
     server = create_server(arm, host=args.host, port=args.port, log_level=cast(LogLevel, args.log_level))
     try:
         server.run(transport="streamable-http" if args.http else "stdio")
     except KeyboardInterrupt:
         arm.stop()
+    finally:
+        if live is not None:
+            live.close()
     return 0
 
 

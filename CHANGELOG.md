@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `--live-port PORT`: a read-only Server-Sent Events stream of the measured joints and tool pose
+  (`GET /state`, 20 Hz while moving, 2 Hz idle) on 127.0.0.1, for live 3D views.
 - `--tool-geometry FILE`: collision boxes for a claw, camera or clip fitted to the wrist, in the wrist-roll link
   frame. They join every contact and table-clearance check; `get_limits` names the fitted tool.
 - Real-arm transport over USB serial (`--real DEVICE`, extra `roarm-mcp[real]`): streams checked waypoints

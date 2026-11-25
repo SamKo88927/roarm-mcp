@@ -60,6 +60,9 @@ class Arm:
         self._monitor = ArmModel(tool)  # used only inside the motion lock
         self._view = ArmModel(tool)  # used only under _view_lock
         self._view_lock = threading.Lock()
+        self._latest_q: Vec = np.asarray(HOME, dtype=np.float64)
+        self._latest_set = False
+        self.state_seq = 0  # bumps whenever new measured joints arrive (for live viewers)
 
     # ------------------------------------------------------------------ reading
     def _state(self, q: Joints) -> Result:
@@ -81,8 +84,32 @@ class Arm:
             "min_clearance_mm": round(clearance, 1),
         }
 
+    def _remember(self, q: Vec) -> None:
+        self._latest_q = np.asarray(q, dtype=np.float64).copy()
+        self._latest_set = True
+        self.state_seq += 1
+
+    def is_moving(self) -> bool:
+        return self._motion.locked()
+
+    def refresh_state(self) -> None:
+        """Re-read the joints from the transport (live viewers call this while the arm is idle)."""
+        try:
+            self._remember(self.transport.read_joints())
+        except Exception:
+            log.debug("live refresh failed", exc_info=True)
+
+    def latest_state(self) -> Result:
+        """The last measured state, without asking the arm. Cheap enough to call 20 times a second."""
+        if not self._latest_set:
+            self.refresh_state()
+        q = self._latest_q
+        return {**self._state(q), "joints_rad": [round(float(v), 4) for v in q]}
+
     def get_state(self) -> Result:
-        return {"ok": True, "state": self._state(self.transport.read_joints())}
+        q = self.transport.read_joints()
+        self._remember(q)
+        return {"ok": True, "state": self._state(q)}
 
     def get_limits(self) -> Result:
         return {"ok": True, "limits": self.governor.describe()}
@@ -139,6 +166,7 @@ class Arm:
         breach = threading.Event()
 
         def monitor(q: Vec) -> None:
+            self._remember(q)
             clearance = self._monitor.table_clearance_mm(q)
             lowest[0] = min(lowest[0], clearance)
             if clearance < self.envelope.min_clearance_mm or self._monitor.contacts(q):
@@ -149,6 +177,7 @@ class Arm:
 
         followed = self.transport.follow(plan.waypoints, period, should_stop, monitor)
         final = self.transport.read_joints()
+        self._remember(final)
         if breach.is_set():
             refusal = Refusal(
                 "ENVELOPE_BREACH",
