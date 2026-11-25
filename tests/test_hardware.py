@@ -9,6 +9,7 @@ from collections.abc import Iterator
 import numpy as np
 import pytest
 
+from roarm_mcp import hardware
 from roarm_mcp.arm import Arm
 from roarm_mcp.hardware import (
     STOCK_GRIPPER,
@@ -25,9 +26,17 @@ def _raw_home() -> list[float]:
     return [*HOME[:5], STOCK_GRIPPER.to_raw(HOME[5])]
 
 
+@pytest.fixture(autouse=True)
+def quick_grip(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The real arm answers ~90 ms late, so each closing step waits 150 ms and a full close takes ~13 s.
+    # Tests use a faster fake and a shorter wait; the stepping logic is the same.
+    monkeypatch.setattr(hardware, "GRIP_STEP_WAIT_S", 0.04)
+    monkeypatch.setattr(hardware, "GRIP_SPD", 1000)  # a step then takes 0.02 s, half the wait, as on the real arm
+
+
 @pytest.fixture
 def firmware() -> FakeFirmware:
-    return FakeFirmware(_raw_home())
+    return FakeFirmware(_raw_home(), latency_s=0.02)
 
 
 @pytest.fixture
@@ -80,12 +89,53 @@ def test_move_runs_on_the_real_protocol(firmware: FakeFirmware, transport: Seria
     assert result["state"]["backend"] == "real"
 
 
-def test_real_backend_refuses_to_close_the_gripper(firmware: FakeFirmware, transport: SerialTransport) -> None:
-    # No contact detection or firmware torque limit yet: closing onto an object could strip a printed gear.
+def test_free_close_reaches_closed_in_small_steps(firmware: FakeFirmware, transport: SerialTransport) -> None:
     result = Arm(transport).gripper(0.0, speed=1.0)
-    assert not result["ok"]
-    assert result["refusal"]["code"] == "GRIPPER_CLOSE_UNSUPPORTED"
-    assert _moves(firmware) == []
+    assert result["ok"], result
+    assert "gripper_contact" not in result["executed"]
+    hands = [m["hand"] for m in _moves(firmware)]
+    assert hands[-1] == pytest.approx(3.13)
+    assert all(abs(b - a) <= 0.0301 for a, b in zip([1.5708, *hands], hands, strict=False))  # never one big jump
+    assert all(m["spd"] == hardware.GRIP_SPD for m in _moves(firmware))
+    assert result["state"]["gripper_opening"] < 0.03
+
+
+def test_close_stops_at_contact_and_backs_off(firmware: FakeFirmware, transport: SerialTransport) -> None:
+    firmware.hand_stop = 2.4  # an object between the jaws, stock claw (raw grows as it closes)
+    result = Arm(transport).gripper(0.0, speed=1.0)
+    assert result["ok"], result
+    assert result["executed"]["gripper_contact"] is True
+    hands = [m["hand"] for m in _moves(firmware)]
+    assert max(hands) < 2.4 + 0.12  # stopped within a few steps of the object, not driven to 3.13
+    assert hands[-1] == pytest.approx(2.4 - 0.03, abs=0.01)  # holds just open of the contact point
+
+
+def test_close_on_a_claw_that_opens_upward() -> None:
+    claw = GripperMap(raw_closed=1.18, raw_open=2.58)
+    firmware = FakeFirmware([*HOME[:5], 2.4], latency_s=0.02)
+    firmware.hand_stop = 1.6  # a ~20 mm object
+    transport = SerialTransport(firmware, claw, feedback_timeout_s=0.5)
+    try:
+        result = Arm(transport).gripper(0.0, speed=1.0)
+        assert result["ok"], result
+        assert result["executed"]["gripper_contact"] is True
+        assert _moves(firmware)[-1]["hand"] == pytest.approx(1.6 + 0.03, abs=0.01)
+        assert all(m["hand"] >= 1.18 for m in _moves(firmware))
+    finally:
+        transport.close()
+
+
+def test_backend_without_grip_support_refuses_to_close(firmware: FakeFirmware) -> None:
+    class NoGrip(SerialTransport):
+        can_close_gripper = False
+
+    transport = NoGrip(firmware, feedback_timeout_s=0.5)
+    try:
+        result = Arm(transport).gripper(0.0)
+        assert result["refusal"]["code"] == "GRIPPER_CLOSE_UNSUPPORTED"
+        assert _moves(firmware) == []
+    finally:
+        transport.close()
 
 
 def test_custom_claw_opens_in_its_own_units() -> None:

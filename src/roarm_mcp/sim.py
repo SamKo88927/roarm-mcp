@@ -167,6 +167,7 @@ class FollowResult:
     stopped: bool
     waypoints_done: int
     tracking_error_rad: float
+    gripper_contact: bool = False  # the jaws met something while closing and now hold it lightly
 
 
 class SimTransport:

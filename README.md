@@ -147,8 +147,9 @@ guard test fails the suite if too few of those random commands actually moved th
 
 ## Limitations
 
-- The real-arm transport is unverified on hardware. It opens the gripper but refuses to close it: there is no
-  contact detection or firmware torque limit yet. Camera tools and pick/place skills are not written yet.
+- The real-arm transport is unverified on hardware. With no firmware torque limit, `gripper` closes the real claw in
+  0.03 rad steps and stops at the first step the jaws lag behind (contact), so a full close takes about 12 s.
+  Camera tools and pick/place skills are not written yet.
 - The simulated arm is built from boxes and cylinders on the arm's kinematic tree: a visual shell in the arm's
   colours, and hidden capsules and boxes for collision. No vendor meshes or CAD files are shipped; the demo
   script can draw the arm with your own copy (`scripts/record_demo.py --meshes`).

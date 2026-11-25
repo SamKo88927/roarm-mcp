@@ -14,8 +14,9 @@ Hardware notes, measured on one arm:
   The port is opened with both lines asserted.
 - Feedback answers at about 11 Hz and arrives late, so it is requested every FEEDBACK_PERIOD_S without blocking
   the waypoint stream, and tracking is judged against the targets sent in the last PATH_WINDOW_S.
-- There is no torque limit in the stock firmware, so this transport never closes the gripper (see
-  `can_close_gripper`): closing onto an object needs contact detection, which is not written yet.
+- There is no torque limit in the stock firmware, so the gripper never closes in one move. It closes in
+  GRIP_STEP_RAD steps at GRIP_SPD, and stops at the first step the jaws fall more than GRIP_CONTACT_LAG_RAD behind:
+  that is contact. It then backs off GRIP_BACKOFF_RAD and holds, so the servo does not stall against the object.
 - The five arm joints map 1:1 to the simulator (forward kinematics agreed within 3 mm). The gripper does not:
   each claw needs a GripperMap measured on that claw.
 """
@@ -44,6 +45,11 @@ STEPS_PER_RAD = 4096 / (2 * math.pi)
 ACC = 15  # x100 steps/s^2; measured as smooth as unlimited, without hard starts
 SETTLE_S = 1.0
 SETTLE_TOL_RAD = 0.03
+GRIP_STEP_RAD = 0.03  # firmware radians per closing step
+GRIP_SPD = 250  # servo steps/s while closing
+GRIP_CONTACT_LAG_RAD = 0.05  # jaws this far behind the step command = they touched something
+GRIP_BACKOFF_RAD = 0.03  # hold this much open from the contact point
+GRIP_STEP_WAIT_S = 0.15  # after a step, use only feedback requested this late: ~2x the 0.078 s a free step takes
 
 
 class TransportError(RuntimeError):
@@ -154,7 +160,7 @@ class SerialTransport:
     """Streams checked waypoints to the real arm and reports measured joints."""
 
     name = "real"
-    can_close_gripper = False  # no contact detection or firmware torque limit yet; opening is allowed
+    can_close_gripper = True  # closing runs the stepped contact-detecting grip below
 
     def __init__(
         self,
@@ -250,6 +256,8 @@ class SerialTransport:
         """
         period_s = max(period_s, MIN_PERIOD_S)
         measured = self.read_joints()
+        if waypoints and _is_gripper_close(waypoints, measured):
+            return self._close_gripper(measured, float(np.asarray(waypoints[-1])[5]), should_stop, on_waypoint)
         previous: Vec = measured
         recent: list[tuple[float, Vec]] = [(time.monotonic(), measured)]
         with self._fresh:
@@ -316,11 +324,81 @@ class SerialTransport:
             worst = max(worst, _arm_error(measured, previous))
         return FollowResult(stopped, done, worst)
 
+    def _fresh_feedback(self, after: float) -> Vec:
+        """Measured joints from a feedback frame requested no earlier than `after` (monotonic time)."""
+        wait = after - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        return self.read_joints()
+
+    def _close_gripper(
+        self,
+        start: Vec,
+        goal_q: float,
+        should_stop: Callable[[], bool],
+        on_waypoint: Callable[[Vec], None],
+    ) -> FollowResult:
+        """Close the jaws step by step; stop at contact and hold lightly. The arm joints hold where they are."""
+        g = self.gripper
+        toward_open = 1.0 if g.raw_open > g.raw_closed else -1.0
+        goal_raw = g.to_raw(goal_q)
+        measured = start
+        cmd_raw = g.to_raw(float(start[5]))
+        steps = 0
+        contact = stopped = False
+        while (cmd_raw - goal_raw) * toward_open > 1e-6:
+            if should_stop():
+                stopped = True
+                break
+            cmd_raw = (
+                max(goal_raw, cmd_raw - GRIP_STEP_RAD) if toward_open > 0 else min(goal_raw, cmd_raw + GRIP_STEP_RAD)
+            )
+            self._send_gripper(start, cmd_raw)
+            steps += 1
+            measured = self._fresh_feedback(time.monotonic() + GRIP_STEP_WAIT_S)
+            on_waypoint(measured)
+            lag = (g.to_raw(float(measured[5])) - cmd_raw) * toward_open  # > 0: jaws more open than commanded
+            if lag > GRIP_CONTACT_LAG_RAD:
+                contact = True
+                self._send_gripper(start, g.to_raw(float(measured[5])) + toward_open * GRIP_BACKOFF_RAD)
+                measured = self._fresh_feedback(time.monotonic() + GRIP_STEP_WAIT_S)
+                on_waypoint(measured)
+                break
+        if stopped:
+            measured = self.read_joints()
+            self._send_gripper(start, g.to_raw(float(measured[5])))
+            on_waypoint(measured)
+        return FollowResult(stopped, steps, _arm_error(measured, start), gripper_contact=contact)
+
+    def _send_gripper(self, arm: Vec, raw: float) -> None:
+        lo, hi = sorted((self.gripper.raw_closed, self.gripper.raw_open))
+        b, s, e, w, r = (float(v) for v in arm[:5])
+        hand = float(np.clip(raw, lo, hi))
+        self._send(
+            {
+                "T": 102,
+                "base": b,
+                "shoulder": s,
+                "elbow": e,
+                "wrist": w,
+                "roll": r,
+                "hand": hand,
+                "spd": GRIP_SPD,
+                "acc": ACC,
+            }
+        )
+
     def close(self) -> None:
         self._closed.set()
         with contextlib.suppress(Exception):
             self.port.close()
         self._reader.join(timeout=1.0)
+
+
+def _is_gripper_close(waypoints: Sequence[Joints], measured: Vec) -> bool:
+    """A gripper-only motion that ends more closed than it starts (the arm joints stay put)."""
+    first, last = np.asarray(waypoints[0], dtype=np.float64), np.asarray(waypoints[-1], dtype=np.float64)
+    return bool(np.allclose(first[:5], last[:5], atol=1e-9) and last[5] < measured[5] - 0.02)
 
 
 def _arm_error(measured: Vec, target: Vec) -> float:
@@ -360,6 +438,9 @@ class FakeFirmware:
         self.lag = lag  # < 1 slows the joints, to test the tracking watchdog
         self.sent: list[dict[str, Any]] = []
         self.silent = False
+        self.hand_stop: float | None = None  # raw value an object blocks the jaws at, from the start side
+        self._hand_start = float(self.q[5])
+        self._hand_side = 0.0
         self.log = log  # a text stream: every motion command is echoed there (--dry-run)
         self.latency_s = latency_s  # feedback arrives this late, like the real arm's ~11 Hz replies
         self._pending: list[tuple[float, bytes]] = []
@@ -372,6 +453,11 @@ class FakeFirmware:
         dt, self._t = now - self._t, now
         step = self.speed * dt * self.lag
         self.q += np.clip(self.target - self.q, -step, step)
+        if self.hand_stop is not None:
+            if self._hand_side == 0.0:
+                self._hand_side = 1.0 if self._hand_start >= self.hand_stop else -1.0
+            if (self.q[5] - self.hand_stop) * self._hand_side < 0:
+                self.q[5] = self.hand_stop  # the object: the jaws cannot pass it
 
     def write(self, data: bytes) -> int:
         with self._lock:

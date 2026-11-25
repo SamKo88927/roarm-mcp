@@ -164,6 +164,7 @@ class Arm:
                 "waypoints": followed.waypoints_done,
                 "min_clearance_mm": round(lowest[0], 1),
                 "tracking_error_deg": _deg(followed.tracking_error_rad),
+                **({"gripper_contact": True} if followed.gripper_contact else {}),
             },
             "state": self._state(final),
             **({"refusal": refusal.to_dict()} if refusal is not None else {}),
