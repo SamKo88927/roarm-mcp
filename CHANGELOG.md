@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- `--record DIR` saves each motion as an episode: plan, measured joints with timestamps (simulated time in the
+  simulator), result. `python -m roarm_mcp.replay` re-runs an episode's plan in the simulator and reports the best-fit
+  lag and the joint and tool errors between what was measured and what the model predicts.
+- `--live-port PORT`: a read-only Server-Sent Events stream of the measured joints and tool pose
+  (`GET /state`, 20 Hz while moving, 2 Hz idle) on 127.0.0.1, for live 3D views.
+- `--tool-geometry FILE`: collision boxes for a claw, camera or clip fitted to the wrist, in the wrist-roll link
+  frame. They join every contact and table-clearance check; `get_limits` names the fitted tool.
+- Real-arm transport over USB serial (`--real DEVICE`, extra `roarm-mcp[real]`): streams checked waypoints
+  with T:102, polls measured joints with T:105, halts and holds on a tracking error, and locks the port so a
+  second process cannot drive the same arm. `--dry-run` prints the commands instead. `--real` requires
+  `--gripper-map` or `--stock-gripper`, defaults to 60 mm table clearance, streams at most 20 waypoints/s, and
+  closes the gripper in 0.03 rad steps, stopping and backing off 0.03 rad at the first sign of contact
+  (`executed.gripper_contact`). Tested against a fake firmware with 90 ms
+  feedback latency only; not yet run on hardware.
 - `serverInfo.version` reports the roarm-mcp version instead of the MCP SDK's.
 - Dockerfile (simulated arm over stdio) and `glama.json`, so MCP directories can start and inspect the server.
 

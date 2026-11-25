@@ -1,0 +1,7 @@
+{
+  "name": "example claw with a camera on top",
+  "boxes": [
+    {"name": "claw_body", "center_mm": [0, 3, 46], "half_size_mm": [42, 30, 49]},
+    {"name": "camera", "center_mm": [-7, -52, 60], "half_size_mm": [36, 31, 24]}
+  ]
+}

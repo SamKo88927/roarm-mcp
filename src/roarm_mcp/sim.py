@@ -12,7 +12,7 @@ import mujoco as _mujoco
 import numpy as np
 from numpy.typing import NDArray
 
-from .model import GRIPPER_OPEN, HOME, JOINT_NAMES, SHOULDER_HEIGHT_M, build_mjcf
+from .model import GRIPPER_OPEN, HOME, JOINT_NAMES, SHOULDER_HEIGHT_M, Tool, build_mjcf
 
 # MuJoCo's compiled bindings ship no type stubs; keep the untyped surface behind one explicit name.
 mj: Any = _mujoco
@@ -53,8 +53,8 @@ class ArmModel:
     Not thread-safe: give each thread its own instance.
     """
 
-    def __init__(self) -> None:
-        self.model = mj.MjModel.from_xml_string(build_mjcf())
+    def __init__(self, tool: Tool | None = None) -> None:
+        self.model = mj.MjModel.from_xml_string(build_mjcf(tool))
         self.data = mj.MjData(self.model)
         self.tcp = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_SITE, "tcp")
         self.table = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_GEOM, "table")
@@ -69,6 +69,10 @@ class ArmModel:
             if int(self.model.geom_bodyid[g]) not in (0, base_body)
             and (int(self.model.geom_contype[g]) or int(self.model.geom_conaffinity[g]))
         }
+        # The turret only spins about the vertical axis, so its height above the table never changes: leave it out of
+        # the table clearance, or it would pin the reported minimum at its own constant height. It stays in contacts.
+        turret = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_BODY, "link1")
+        self.clearance_geoms: set[int] = {g for g in self.moving_geoms if int(self.model.geom_bodyid[g]) != turret}
 
     def _set(self, q: Joints) -> None:
         self.data.qpos[:] = np.asarray(q, dtype=np.float64)
@@ -104,7 +108,7 @@ class ArmModel:
         self._set(q)
         best = float(self.data.site_xpos[self.tcp][2])
         fromto = np.zeros(6)
-        for g in self.moving_geoms:
+        for g in self.clearance_geoms:
             dist = mj.mj_geomDistance(self.model, self.data, g, self.table, 0.2, fromto)
             best = min(best, float(dist))
         return best * 1000
@@ -167,6 +171,7 @@ class FollowResult:
     stopped: bool
     waypoints_done: int
     tracking_error_rad: float
+    gripper_contact: bool = False  # the jaws met something while closing and now hold it lightly
 
 
 class SimTransport:
@@ -174,15 +179,19 @@ class SimTransport:
 
     name = "sim"
 
-    def __init__(self, realtime: bool = True) -> None:
+    def __init__(self, realtime: bool = True, tool: Tool | None = None) -> None:
         self.realtime = realtime
-        self.model = mj.MjModel.from_xml_string(build_mjcf())
+        self.model = mj.MjModel.from_xml_string(build_mjcf(tool))
         self.data = mj.MjData(self.model)
         mj.mj_resetDataKeyframe(self.model, self.data, 0)
         mj.mj_forward(self.model, self.data)
 
     def read_joints(self) -> Vec:
         return self.data.qpos.copy()
+
+    def now(self) -> float:
+        """Simulated seconds: episodes recorded faster than real time still carry true motion timing."""
+        return float(self.data.time)
 
     def _step(self, n: int) -> None:
         start = time.monotonic()

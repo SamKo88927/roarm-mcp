@@ -27,8 +27,9 @@ and without them the simulator draws a box-and-cylinder shell.</sub>
 - **Refusals a model can use.** A refused command returns a reason code, a message and, when one exists, the
   farthest checked-safe pose toward the target, so the model can correct itself instead of retrying blindly.
 
-> **Status: 0.1, simulation only.** Real-hardware transports (USB serial and Wi-Fi) are the next milestone.
-> `--real` is refused in this release.
+> **Status: 0.1 runs in simulation.** A USB-serial transport for the real arm (`--real`) is on `main` and tested
+> against a fake firmware, but has not been run on hardware yet, and is not in a PyPI release. Use `--dry-run` to see
+> the commands it would send.
 
 ## Quick start
 
@@ -65,6 +66,14 @@ claude mcp add roarm -- uvx roarm-mcp
 | `--http` | Serve streamable HTTP on `--host`/`--port` (default `127.0.0.1:8000`) instead of stdio |
 | `--allow-remote` | Required for a non-loopback `--host`. The HTTP endpoint has no authentication |
 | `--fast` | Run the simulation faster than real time |
+| `--real DEVICE` | Drive the real arm on a serial device such as `/dev/cu.usbserial-XXXX` (`pip install 'roarm-mcp[real]'`). Unverified on hardware |
+| `--dry-run` | With `--real`: talk to a fake arm and print every command that would be sent |
+| `--gripper-map FILE` | With `--real`: `{"raw_closed": ..., "raw_open": ...}` measured on your claw, in firmware radians |
+| `--stock-gripper` | With `--real`: the arm has the stock claw. `--real` needs this or `--gripper-map` |
+| `--live-port PORT` | Also stream the measured joints as Server-Sent Events on `http://127.0.0.1:PORT/state` for a 3D view (read only, loopback only) |
+| `--record DIR` | Save every motion as an episode (plan, measured joints with timestamps, result). `python -m roarm_mcp.replay DIR/*.json` replays them in the simulator and reports lag, joint error and tool error |
+| `--tool-geometry FILE` | Collision boxes for a claw or camera fitted to the wrist (see `tests/data/example_tool.json`); every safety check then keeps them clear too |
+| `--min-clearance-mm` | Smallest allowed arm-to-table distance. Default 15 in simulation, 60 with `--real`, because the model does not know about tools or cameras you fitted |
 | `--log-level` | `DEBUG` to `ERROR`. Logs go to stderr only, so stdio stays clean |
 
 Then ask, for example: *"Check the limits, then move the gripper to 40 mm above the table at x=220, y=80."*
@@ -141,7 +150,9 @@ guard test fails the suite if too few of those random commands actually moved th
 
 ## Limitations
 
-- Simulation only in 0.1. The real-arm transports, camera tools and pick/place skills are not in this release.
+- The real-arm transport is unverified on hardware. With no firmware torque limit, `gripper` closes the real claw in
+  0.03 rad steps and stops at the first step the jaws lag behind (contact), so a full close takes about 12 s.
+  Camera tools and pick/place skills are not written yet.
 - The simulated arm is built from boxes and cylinders on the arm's kinematic tree: a visual shell in the arm's
   colours, and hidden capsules and boxes for collision. No vendor meshes or CAD files are shipped; the demo
   script can draw the arm with your own copy (`scripts/record_demo.py --meshes`).

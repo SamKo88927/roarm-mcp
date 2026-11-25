@@ -9,12 +9,14 @@ from __future__ import annotations
 import logging
 import math
 import threading
+import time
 from collections.abc import Callable, Sequence
 from typing import Any, Protocol
 
 import numpy as np
 
-from .model import GRIPPER_OPEN, HOME, JOINT_NAMES
+from .episodes import Episode, EpisodeRecorder
+from .model import GRIPPER_OPEN, HOME, JOINT_NAMES, Tool
 from .safety import Envelope, Governor, Plan, Refusal
 from .sim import ArmModel, FollowResult, Joints, Pose, Vec
 from .trace import Trace
@@ -43,16 +45,30 @@ def _deg(v: float) -> float:
 
 
 class Arm:
-    def __init__(self, transport: Transport, envelope: Envelope | None = None, trace: Trace | None = None):
+    def __init__(
+        self,
+        transport: Transport,
+        envelope: Envelope | None = None,
+        trace: Trace | None = None,
+        tool: Tool | None = None,
+        recorder: EpisodeRecorder | None = None,
+    ):
         self.transport = transport
-        self.governor = Governor(envelope)
+        self.tool = tool
+        self.recorder = recorder
+        self.governor = Governor(envelope, tool)
         self.envelope = self.governor.envelope
         self.trace = trace or Trace()
         self._motion = threading.Lock()
         self._stop = threading.Event()
-        self._monitor = ArmModel()  # used only inside the motion lock
-        self._view = ArmModel()  # used only under _view_lock
+        self._monitor = ArmModel(tool)  # used only inside the motion lock
+        self._view = ArmModel(tool)  # used only under _view_lock
         self._view_lock = threading.Lock()
+        self._latest_q: Vec = np.asarray(HOME, dtype=np.float64)
+        self._latest_set = False
+        self._latest_at = 0.0  # unix time the joints were measured
+        self._read_error: str | None = None
+        self.state_seq = 0  # bumps whenever new measured joints arrive (for live viewers)
 
     # ------------------------------------------------------------------ reading
     def _state(self, q: Joints) -> Result:
@@ -74,8 +90,41 @@ class Arm:
             "min_clearance_mm": round(clearance, 1),
         }
 
+    def _remember(self, q: Vec) -> None:
+        self._latest_q = np.asarray(q, dtype=np.float64).copy()
+        self._latest_set = True
+        self._latest_at = time.time()
+        self._read_error = None
+        self.state_seq += 1
+
+    def is_moving(self) -> bool:
+        return self._motion.locked()
+
+    def refresh_state(self) -> None:
+        """Re-read the joints from the transport (live viewers call this while the arm is idle)."""
+        try:
+            self._remember(self.transport.read_joints())
+        except Exception as exc:
+            self._read_error = f"{type(exc).__name__}: {exc}"
+            log.debug("live refresh failed", exc_info=True)
+
+    def latest_state(self) -> Result:
+        """The last measured state, without asking the arm. Cheap enough to call 20 times a second."""
+        if not self._latest_set:
+            self.refresh_state()
+        q = self._latest_q
+        return {
+            **self._state(q),
+            "joints_rad": [round(float(v), 4) for v in q],
+            "seq": self.state_seq,
+            "measured_at": round(self._latest_at, 3) if self._latest_set else None,
+            "read_error": self._read_error,
+        }
+
     def get_state(self) -> Result:
-        return {"ok": True, "state": self._state(self.transport.read_joints())}
+        q = self.transport.read_joints()
+        self._remember(q)
+        return {"ok": True, "state": self._state(q)}
 
     def get_limits(self) -> Result:
         return {"ok": True, "limits": self.governor.describe()}
@@ -107,14 +156,24 @@ class Arm:
             }
             self.trace.record(tool, arguments, result)
             return result
+        episode: Episode | None = None
         try:
             self._stop.clear()
             current = self.transport.read_joints()
+            episode = Episode(
+                tool,
+                arguments,
+                self.transport.name,
+                self.tool.name if self.tool else None,
+                current.copy(),
+                clock=getattr(self.transport, "now", time.monotonic),
+            )
+            episode.sample(current)
             plan = planner(current)
             if isinstance(plan, Refusal):
                 result = {"ok": False, "refusal": plan.to_dict(), "state": self._state(current)}
             else:
-                result = self._execute(plan, speed)
+                result = self._execute(plan, speed, episode)
         except Exception as exc:
             # A fault in planning or in the transport must not leave the model guessing or the lock held.
             log.exception("%s failed", tool)
@@ -122,16 +181,22 @@ class Arm:
             result = {"ok": False, "refusal": refusal.to_dict()}
         finally:
             self._motion.release()
+        if self.recorder is not None and episode is not None:
+            self.recorder.save(episode, result)
         self.trace.record(tool, arguments, result)
         return result
 
-    def _execute(self, plan: Plan, speed: float) -> Result:
+    def _execute(self, plan: Plan, speed: float, episode: Episode) -> Result:
         speed = float(np.clip(speed, 0.05, 1.0))
         period = self.envelope.max_waypoint_step / (self.envelope.max_joint_speed * speed)
+        episode.period_s = period
+        episode.planned = [np.asarray(w, dtype=np.float64) for w in plan.waypoints]
         lowest = [math.inf]
         breach = threading.Event()
 
         def monitor(q: Vec) -> None:
+            self._remember(q)
+            episode.sample(q)
             clearance = self._monitor.table_clearance_mm(q)
             lowest[0] = min(lowest[0], clearance)
             if clearance < self.envelope.min_clearance_mm or self._monitor.contacts(q):
@@ -142,6 +207,8 @@ class Arm:
 
         followed = self.transport.follow(plan.waypoints, period, should_stop, monitor)
         final = self.transport.read_joints()
+        self._remember(final)
+        episode.sample(final)
         if breach.is_set():
             refusal = Refusal(
                 "ENVELOPE_BREACH",
@@ -164,6 +231,7 @@ class Arm:
                 "waypoints": followed.waypoints_done,
                 "min_clearance_mm": round(lowest[0], 1),
                 "tracking_error_deg": _deg(followed.tracking_error_rad),
+                **({"gripper_contact": True} if followed.gripper_contact else {}),
             },
             "state": self._state(final),
             **({"refusal": refusal.to_dict()} if refusal is not None else {}),
@@ -202,6 +270,14 @@ class Arm:
         def planner(q: Vec) -> Plan | Refusal:
             if not (math.isfinite(opening) and 0.0 <= opening <= 1.0):
                 return Refusal("BAD_GRIPPER", "opening must be between 0 (closed) and 1 (open)")
+            current = float(np.clip(q[5] / GRIPPER_OPEN, 0.0, 1.0))
+            if opening < current - 0.02 and not getattr(self.transport, "can_close_gripper", True):
+                return Refusal(
+                    "GRIPPER_CLOSE_UNSUPPORTED",
+                    "this backend cannot close the gripper yet (no contact detection or torque limit); "
+                    "opening is allowed",
+                    {"current_opening": round(current, 3)},
+                )
             goal = self.governor.clip(q)
             goal[5] = opening * GRIPPER_OPEN
             return self.governor.check_path(q, goal)

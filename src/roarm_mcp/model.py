@@ -19,7 +19,10 @@ Gripper convention (this package only): joint value 0 = closed, GRIPPER_OPEN = f
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+import math
+from dataclasses import dataclass, field
+from pathlib import Path
 
 SHOULDER_HEIGHT_M = 0.0701 + 0.051959
 GRIPPER_OPEN = 1.2
@@ -52,13 +55,63 @@ VISUAL_GROUP = 1  # visual-only geoms: no contacts, no mass
 COLLISION_GROUP = 3  # collision geoms: hidden in renders by default
 
 
+@dataclass(frozen=True)
+class ToolBox:
+    """A collision box fixed to the wrist-roll link (link5). Millimetres, in the link5 frame:
+    z runs along the tool axis toward the fingertips; the stock tool centre point is at z = 115.4."""
+
+    name: str
+    center_mm: tuple[float, float, float]
+    half_size_mm: tuple[float, float, float]
+
+    def __post_init__(self) -> None:
+        if not self.name.replace("_", "").isalnum():
+            raise ValueError(f"tool box name {self.name!r}: use letters, digits and _")
+        values = (*self.center_mm, *self.half_size_mm)
+        if len(self.center_mm) != 3 or len(self.half_size_mm) != 3 or not all(math.isfinite(v) for v in values):
+            raise ValueError(f"tool box {self.name!r}: center_mm and half_size_mm need 3 finite numbers each")
+        if not all(0 < v <= 200 for v in self.half_size_mm):
+            raise ValueError(f"tool box {self.name!r}: half sizes must be in (0, 200] mm")
+
+
+@dataclass(frozen=True)
+class Tool:
+    """Extra collision geometry for what is fitted to the wrist: a custom claw, a camera, a cable clip.
+
+    The boxes are added to the stock collision shapes, so every safety check also keeps them clear of the
+    table and of the arm. They are hidden in renders.
+    """
+
+    name: str
+    boxes: tuple[ToolBox, ...] = field(default=())
+
+    @classmethod
+    def load(cls, path: Path) -> Tool:
+        data = json.loads(path.read_text())
+        boxes = tuple(
+            ToolBox(str(b["name"]), tuple(map(float, b["center_mm"])), tuple(map(float, b["half_size_mm"])))  # type: ignore[arg-type]
+            for b in data["boxes"]
+        )
+        if not boxes:
+            raise ValueError(f"{path}: a tool needs at least one box")
+        return cls(str(data.get("name", path.stem)), boxes)
+
+    def mjcf(self) -> str:
+        return "".join(
+            f'<geom name="tool_{b.name}" type="box" pos="{b.center_mm[0] / 1000} {b.center_mm[1] / 1000} '
+            f'{b.center_mm[2] / 1000}" size="{b.half_size_mm[0] / 1000} {b.half_size_mm[1] / 1000} '
+            f'{b.half_size_mm[2] / 1000}" density="0"/>'
+            for b in self.boxes
+        )
+
+
 def _joint(name: str) -> str:
     spec = next(j for j in JOINTS if j.name == name)
     return f'<joint name="{name}" type="hinge" axis="0 0 1" range="{spec.lower} {spec.upper}"/>'
 
 
-def build_mjcf() -> str:
-    """Return the MJCF XML for the arm on a table."""
+def build_mjcf(tool: Tool | None = None) -> str:
+    """Return the MJCF XML for the arm on a table, with the tool's collision boxes on the wrist if given."""
     actuators = "\n    ".join(
         f'<position name="{j.name}" joint="{j.name}" kp="{j.kp}" kv="{j.kv}" forcerange="{-j.force} {j.force}"/>'
         for j in JOINTS
@@ -143,6 +196,7 @@ def build_mjcf() -> str:
               <body name="link5" gravcomp="1" pos="0.015147 -0.053653 0" quat="0.499998163 0.5 0.5 -0.500001837">
                 {_joint("wrist_roll")}
                 <geom name="hand" type="capsule" size="0.020" fromto="0 0 0.010 0 0 0.094"/>
+                {tool.mjcf() if tool else ""}
                 <geom class="visual" type="box" size="0.02 0.016 0.034" pos="0 0 0.044"/>
                 <geom class="servo" type="box" size="0.0124 0.0085 0.0226" pos="0 -0.024 0.044"/>
                 <geom class="visual" type="box" size="0.016 0.003 0.022" pos="0 0.013 0.098"/>

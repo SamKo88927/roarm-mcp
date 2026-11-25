@@ -72,9 +72,22 @@ async def test_resources() -> None:
         assert uris == {"roarm://limits", "roarm://trace/latest"}
 
 
-def test_real_flag_refuses_cleanly(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["--real"]) == 2
-    assert "simulation only" in capsys.readouterr().err
+def test_real_flag_reports_a_missing_device(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["--real", "/dev/roarm-mcp-test-no-such-port", "--stock-gripper"]) == 2
+    assert "cannot open" in capsys.readouterr().err
+
+
+def test_real_needs_a_named_claw(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as e:
+        main(["--real", "/dev/roarm-mcp-test-no-such-port"])
+    assert e.value.code == 2
+    assert "--gripper-map" in capsys.readouterr().err
+
+
+def test_dry_run_needs_real() -> None:
+    with pytest.raises(SystemExit) as e:
+        main(["--dry-run"])
+    assert e.value.code == 2
 
 
 def test_http_refuses_non_loopback_without_opt_in(capsys: pytest.CaptureFixture[str]) -> None:
